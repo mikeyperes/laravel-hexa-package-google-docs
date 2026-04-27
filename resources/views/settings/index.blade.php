@@ -10,13 +10,13 @@
 
     <div class="bg-sky-50 border border-sky-200 rounded-xl p-4 text-sm text-sky-900">
         <p class="font-semibold mb-1">Public Google Docs only</p>
-        <p>No API key is required. This package reads public Google Docs through Google's export endpoint and returns text or HTML content.</p>
+        <p>No API key is required because publicly shared Google Docs expose a direct export endpoint. This beta release is read-only and currently focused on fetching content from public documents only.</p>
     </div>
 
     <div class="bg-white rounded-xl border border-gray-200 shadow-sm p-6 space-y-4">
         <div>
             <h2 class="text-lg font-semibold text-gray-900">Package Settings</h2>
-            <p class="text-sm text-gray-500 mt-1">These defaults are used when testing or fetching public documents from Hexa.</p>
+            <p class="text-sm text-gray-500 mt-1">These defaults are used when testing or fetching public documents from Hexa. Private Google Docs auth, write-back, and sync flows are not part of this beta release.</p>
         </div>
 
         <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -58,7 +58,7 @@
     <div class="bg-white rounded-xl border border-gray-200 shadow-sm p-6 space-y-4">
         <div>
             <h2 class="text-lg font-semibold text-gray-900">Public Document Tester</h2>
-            <p class="text-sm text-gray-500 mt-1">Paste a public Google Docs URL and fetch the exported content directly from production.</p>
+            <p class="text-sm text-gray-500 mt-1">Paste a public Google Docs URL and fetch the exported content directly from production. This beta tester is for reading public documents only.</p>
         </div>
 
         <div class="grid grid-cols-1 md:grid-cols-4 gap-4 items-end">

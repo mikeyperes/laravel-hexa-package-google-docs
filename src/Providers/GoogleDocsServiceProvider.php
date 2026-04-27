@@ -57,7 +57,8 @@ class GoogleDocsServiceProvider extends ServiceProvider
                 'settingsShellClass' => 'max-w-4xl',
                 'docsSlug' => 'google-docs',
                 'instructions' => [
-                    'No API key is required for public Google Docs.',
+                    'No API key is required because public Google Docs expose a direct export endpoint for publicly shared documents.',
+                    'Beta release: this package is currently read-only and focused on fetching public document content only.',
                     'Paste a public Google Docs URL into the tester to fetch text or HTML exports.',
                 ],
                 'apiLinks' => [
@@ -84,11 +85,11 @@ HTML;
                 app(\hexa_core\Services\DocumentationService::class)->register('google-docs', 'Google Docs', 'hexawebsystems/laravel-hexa-package-google-docs', [
                     [
                         'title' => 'Overview',
-                        'content' => 'Reads public Google Docs content through the native Google Docs export endpoint. No API key or OAuth setup is required for publicly shared documents.',
+                        'content' => 'Beta public-reader package for Google Docs. It reads publicly shared Google Docs through the native export endpoint, so no API key or OAuth setup is required for public documents.',
                     ],
                     [
                         'title' => 'Supported Inputs',
-                        'content' => 'Accepts a public Google Docs URL or a raw document ID. Supports plain-text and HTML exports.',
+                        'content' => 'Accepts a public Google Docs URL or a raw document ID. This beta release is read-only and currently supports plain-text and HTML exports for public documents only.',
                     ],
                     [
                         'title' => 'GoogleDocsService API',
