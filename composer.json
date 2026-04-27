@@ -1,0 +1,20 @@
+{
+  "name": "hexawebsystems/laravel-hexa-package-google-docs",
+  "description": "Hexa package for reading public Google Docs content without API credentials.",
+  "type": "library",
+  "license": "MIT",
+  "autoload": {
+    "psr-4": {
+      "hexa_package_google_docs\\": "src/"
+    }
+  },
+  "extra": {
+    "laravel": {
+      "providers": [
+        "hexa_package_google_docs\\Providers\\GoogleDocsServiceProvider"
+      ]
+    }
+  },
+  "minimum-stability": "dev",
+  "prefer-stable": true
+}
