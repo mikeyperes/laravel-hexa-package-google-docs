@@ -4,6 +4,7 @@ namespace hexa_package_google_docs\Providers;
 
 use Illuminate\Support\ServiceProvider;
 use hexa_package_google_docs\Services\GoogleDocsService;
+use hexa_package_google_docs\Services\GoogleDocsWriteService;
 
 class GoogleDocsServiceProvider extends ServiceProvider
 {
@@ -14,6 +15,12 @@ class GoogleDocsServiceProvider extends ServiceProvider
         $this->app->singleton(GoogleDocsService::class, function ($app) {
             return new GoogleDocsService(
                 $app->make(\hexa_core\Services\GenericService::class)
+            );
+        });
+
+        $this->app->singleton(GoogleDocsWriteService::class, function ($app) {
+            return new GoogleDocsWriteService(
+                $app->make(\hexa_core\Services\CredentialService::class)
             );
         });
     }
@@ -54,23 +61,25 @@ class GoogleDocsServiceProvider extends ServiceProvider
                 'color' => 'sky',
                 'icon' => $icon,
                 'settingsRoute' => 'settings.google-docs',
-                'settingsShellClass' => 'max-w-4xl',
+                'settingsShellClass' => 'max-w-5xl',
                 'docsSlug' => 'google-docs',
                 'instructions' => [
-                    'No API key is required because public Google Docs expose a direct export endpoint for publicly shared documents.',
-                    'Beta release: this package is currently read-only and focused on fetching public document content only.',
-                    'Paste a public Google Docs URL into the tester to fetch text or HTML exports.',
+                    'Use Google Docs read mode to import public Google Docs URLs without OAuth.',
+                    'Enable OAuth user write mode or service-account write mode to create, update, and delete Google Docs from Hexa.',
+                    'Drive API manages the file lifecycle; Docs API manages the document body content.',
+                    'If you need docs to be created under a specific mailbox, verify the connected write identity on the settings screen before exporting documents.',
                 ],
                 'apiLinks' => [
+                    ['label' => 'Google Docs API', 'url' => 'https://developers.google.com/docs/api'],
+                    ['label' => 'Google Drive API', 'url' => 'https://developers.google.com/drive/api'],
                     ['label' => 'Google Docs Sharing', 'url' => 'https://support.google.com/docs/answer/2494822'],
-                    ['label' => 'Google Docs Export Format', 'url' => 'https://docs.google.com/document/'],
                 ],
             ]);
         }
 
         if (class_exists(\hexa_core\Services\DocumentationService::class)) {
             try {
-                $serviceApi = <<<'HTML'
+                $readApi = <<<'HTML'
 <pre class="bg-gray-900 text-gray-300 text-xs font-mono p-4 rounded-lg whitespace-pre-wrap">use hexa_package_google_docs\Services\GoogleDocsService;
 $docs = app(GoogleDocsService::class);
 
@@ -82,22 +91,34 @@ $docs->fetchDocument($urlOrId, 'txt');
 $docs->fetchDocument($urlOrId, 'html');</pre>
 HTML;
 
+                $writeApi = <<<'HTML'
+<pre class="bg-gray-900 text-gray-300 text-xs font-mono p-4 rounded-lg whitespace-pre-wrap">use hexa_package_google_docs\Services\GoogleDocsWriteService;
+$docs = app(GoogleDocsWriteService::class);
+
+$docs->writeContext();
+$docs->testWriteConnection();
+$docs->createDocumentFromHtml($title, $html);
+$docs->updateDocumentFromHtml($documentId, $title, $html);
+$docs->deleteDocument($documentId);
+$docs->smokeTestWrite();</pre>
+HTML;
+
                 app(\hexa_core\Services\DocumentationService::class)->register('google-docs', 'Google Docs', 'hexawebsystems/laravel-hexa-package-google-docs', [
                     [
                         'title' => 'Overview',
-                        'content' => 'Beta public-reader package for Google Docs. It reads publicly shared Google Docs through the native export endpoint, so no API key or OAuth setup is required for public documents.',
+                        'content' => 'Shared Google Docs package for public-document imports and authenticated document export. Public read mode uses the native Google Docs export endpoint. Write mode uses Google Drive for file lifecycle and Google Docs for body updates.',
                     ],
                     [
-                        'title' => 'Supported Inputs',
-                        'content' => 'Accepts a public Google Docs URL or a raw document ID. This beta release is read-only and currently supports plain-text and HTML exports for public documents only.',
+                        'title' => 'Read API',
+                        'content' => $readApi,
                     ],
                     [
-                        'title' => 'GoogleDocsService API',
-                        'content' => $serviceApi,
+                        'title' => 'Write API',
+                        'content' => $writeApi,
                     ],
                     [
                         'title' => 'Config Keys',
-                        'content' => '<pre class="bg-gray-900 text-gray-300 text-xs font-mono p-4 rounded-lg whitespace-pre-wrap break-words">config(\'google-docs.version\')\nconfig(\'google-docs.default_format\')\nconfig(\'google-docs.timeout_seconds\')\nconfig(\'google-docs.user_agent\')\nconfig(\'google-docs.max_preview_chars\')</pre>',
+                        'content' => '<pre class="bg-gray-900 text-gray-300 text-xs font-mono p-4 rounded-lg whitespace-pre-wrap break-words">config(\'google-docs.version\')\nconfig(\'google-docs.default_format\')\nconfig(\'google-docs.timeout_seconds\')\nconfig(\'google-docs.user_agent\')\nconfig(\'google-docs.max_preview_chars\')\nconfig(\'google-docs.auth_mode\')\nconfig(\'google-docs.owner_email\')\nconfig(\'google-docs.default_folder_id\')</pre>',
                     ],
                 ], 'package');
             } catch (\Throwable $e) {
