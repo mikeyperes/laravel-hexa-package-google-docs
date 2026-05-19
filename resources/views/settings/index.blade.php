@@ -52,6 +52,34 @@
                     <span class="text-sm font-medium text-gray-700">Default Drive folder ID</span>
                     <input x-model="general.default_folder_id" type="text" class="mt-1 w-full rounded-lg border-gray-300 focus:border-sky-500 focus:ring-sky-500" placeholder="Google Drive folder ID">
                 </label>
+                <div class="md:col-span-2 rounded-xl border border-emerald-200 bg-emerald-50 p-4 space-y-3">
+                    <div>
+                        <p class="text-sm font-semibold text-emerald-900">Create export folder in Google Drive</p>
+                        <p class="mt-1 text-xs text-emerald-800">Creates a folder for article exports under the active Google Docs write identity. When successful, the folder ID is saved as the default export folder.</p>
+                    </div>
+                    <div class="grid gap-3 md:grid-cols-2">
+                        <label class="block">
+                            <span class="text-sm font-medium text-emerald-900">Folder name</span>
+                            <input x-model="folder.folder_name" type="text" class="mt-1 w-full rounded-lg border-emerald-300 focus:border-emerald-500 focus:ring-emerald-500" placeholder="scalemypublication.com, publish exports">
+                        </label>
+                        <label class="block">
+                            <span class="text-sm font-medium text-emerald-900">Parent folder ID (optional)</span>
+                            <input x-model="folder.parent_folder_id" type="text" class="mt-1 w-full rounded-lg border-emerald-300 focus:border-emerald-500 focus:ring-emerald-500" placeholder="Leave blank for Drive root">
+                        </label>
+                    </div>
+                    <label class="inline-flex items-center gap-2 text-sm text-emerald-900">
+                        <input x-model="folder.set_as_default" type="checkbox" class="rounded border-emerald-300 text-emerald-600 focus:ring-emerald-500">
+                        <span>Save created folder as the default export folder</span>
+                    </label>
+                    <div class="flex flex-wrap items-center gap-3">
+                        <button @click="createFolder" :disabled="creatingFolder" type="button" class="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50">
+                            <svg x-show="creatingFolder" x-cloak class="h-4 w-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg>
+                            <span x-text="creatingFolder ? &quot;Creating…&quot; : &quot;Create export folder&quot;"></span>
+                        </button>
+                        <a x-show="folderResult?.success && folderResult?.web_view_link" x-cloak class="text-sm font-medium text-emerald-700 hover:underline" :href="folderResult?.web_view_link || &quot;#&quot;" target="_blank" rel="noopener">Open folder</a>
+                        <p x-show="folderResult" x-cloak class="text-sm" :class="folderResult?.success ? &quot;text-emerald-700&quot; : &quot;text-red-700&quot;" x-text="folderResult?.message || &quot;&quot;"></p>
+                    </div>
+                </div>
             </div>
             <div class="flex items-center gap-3">
                 <button @click="saveGeneral" :disabled="savingGeneral" type="button" class="inline-flex items-center gap-2 rounded-lg bg-sky-600 px-4 py-2 text-sm font-medium text-white hover:bg-sky-700 disabled:opacity-50">
@@ -153,11 +181,13 @@ function googleDocsSettings() {
         testingRead: false,
         testingWrite: false,
         smokingWrite: false,
+        creatingFolder: false,
         generalResult: null,
         oauthResult: null,
         serviceAccountResult: null,
         readResult: null,
         writeResult: null,
+        folderResult: null,
         context: {
             auth_mode: @js($authMode),
             owner_email: @js($ownerEmail),
@@ -178,6 +208,7 @@ function googleDocsSettings() {
         },
         oauth: { oauth_client_id: '', oauth_client_secret: '', oauth_refresh_token: '' },
         serviceAccount: { service_account_json: '' },
+        folder: { folder_name: "scalemypublication.com, publish exports", parent_folder_id: "", set_as_default: true },
         read: { doc_url: '', format: @js($defaultFormat) },
         init() {},
         async postJson(url, body) {
@@ -253,6 +284,19 @@ function googleDocsSettings() {
             } catch (error) {
                 this.writeResult = { success: false, message: error.message };
             } finally { this.testingWrite = false; }
+        },
+        async createFolder() {
+            this.creatingFolder = true; this.folderResult = null;
+            try {
+                const { data } = await this.postJson(@js(route("settings.google-docs.create-folder")), this.folder);
+                this.folderResult = data;
+                if (data?.success && data?.folder_id) {
+                    this.general.default_folder_id = data.folder_id;
+                    this.context.default_folder_id = data.folder_id;
+                }
+            } catch (error) {
+                this.folderResult = { success: false, message: error.message };
+            } finally { this.creatingFolder = false; }
         },
         async smokeWrite() {
             this.smokingWrite = true; this.writeResult = null;

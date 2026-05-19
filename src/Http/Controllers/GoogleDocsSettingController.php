@@ -94,6 +94,29 @@ class GoogleDocsSettingController extends Controller
         return response()->json(array_merge(['success' => (bool) ($test['success'] ?? false)], $test), ($test['success'] ?? false) ? 200 : 422);
     }
 
+    public function createFolder(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'folder_name' => 'required|string|min:2|max:255',
+            'parent_folder_id' => 'nullable|string|max:255',
+            'set_as_default' => 'nullable|boolean',
+        ]);
+
+        $result = $this->write->createFolder(
+            trim($validated['folder_name']),
+            trim((string) ($validated['parent_folder_id'] ?? ''))
+        );
+
+        if ($result['success'] ?? false) {
+            if ($validated['set_as_default'] ?? true) {
+                Setting::setValue('google_docs_default_folder_id', (string) ($result['folder_id'] ?? ''), 'packages');
+                $result['default_folder_id'] = (string) ($result['folder_id'] ?? '');
+            }
+        }
+
+        return response()->json($result, ($result['success'] ?? false) ? 200 : 422);
+    }
+
     public function testRead(Request $request): JsonResponse
     {
         $validated = $request->validate([

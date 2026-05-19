@@ -22,14 +22,21 @@ class GoogleDocsWriteService
     public function writeContext(): array
     {
         $mode = $this->authMode();
+        $hasOauthCredentials = $this->credentials->exists('google-docs', 'oauth_client_id')
+            && $this->credentials->exists('google-docs', 'oauth_client_secret')
+            && $this->credentials->exists('google-docs', 'oauth_refresh_token');
+        $hasServiceAccount = $this->serviceAccountJson() !== '';
+
         return [
             'auth_mode' => $mode,
             'connected_email' => trim((string) Setting::getValue('google_docs_connected_email', '')) ?: null,
             'owner_email' => $this->ownerEmail(),
             'default_folder_id' => $this->defaultFolderId(),
+            'has_oauth_credentials' => $hasOauthCredentials,
+            'has_service_account' => $hasServiceAccount,
             'has_write_access' => $mode === 'oauth_user'
-                ? ($this->credentials->exists('google-docs','oauth_client_id') && $this->credentials->exists('google-docs','oauth_client_secret') && $this->credentials->exists('google-docs','oauth_refresh_token'))
-                : ($mode === 'service_account' ? ($this->serviceAccountJson() !== '') : false),
+                ? $hasOauthCredentials
+                : ($mode === 'service_account' ? $hasServiceAccount : false),
         ];
     }
 
@@ -78,9 +85,45 @@ class GoogleDocsWriteService
         return ['success' => true, 'message' => 'Google Docs smoke test passed.', 'document_id' => (string) ($res['document_id'] ?? '')];
     }
 
+    public function createFolder(string $name, ?string $parentId = null): array
+    {
+        $folderName = trim($name);
+        if ($folderName === '') return ['success' => false, 'message' => 'Folder name is required.'];
+
+        $token = $this->token();
+        if (!($token['success'] ?? false)) return $token;
+
+        $body = [
+            'name' => $folderName,
+            'mimeType' => 'application/vnd.google-apps.folder',
+        ];
+
+        $parentId = trim((string) $parentId);
+        if ($parentId !== '') $body['parents'] = [$parentId];
+
+        $res = $this->req(
+            'POST',
+            self::DRIVE_API_BASE . '/files?fields=id,name,webViewLink,parents',
+            array_merge($this->auth((string) $token['access_token']), ['Content-Type: application/json']),
+            json_encode($body, JSON_UNESCAPED_SLASHES)
+        );
+
+        if (!($res['success'] ?? false)) {
+            return ['success' => false, 'message' => $res['error'] ?? 'Failed to create the Google Drive folder.'];
+        }
+
+        return [
+            'success' => true,
+            'message' => 'Google Drive folder created successfully.',
+            'folder_id' => (string) ($res['data']['id'] ?? ''),
+            'name' => (string) ($res['data']['name'] ?? $folderName),
+            'web_view_link' => (string) ($res['data']['webViewLink'] ?? ''),
+        ];
+    }
+
     protected function token(): array
     {
-        if ($this->authMode() === 'public_read') return ['success' => false, 'message' => 'Google Docs write access is not configured.'];
+        if ($this->authMode() === 'public_read') return ['success' => false, 'message' => 'Google Docs write access is not configured. Open Settings > Google Docs, switch Write auth mode to OAuth user write or Service account write, and save real write credentials first.'];
         if ($this->authMode() === 'oauth_user') {
             $id = trim((string) $this->credentials->get('google-docs','oauth_client_id')); $secret = trim((string) $this->credentials->get('google-docs','oauth_client_secret')); $refresh = trim((string) $this->credentials->get('google-docs','oauth_refresh_token'));
             if ('' === $id || '' === $secret || '' === $refresh) return ['success' => false, 'message' => 'Google Docs OAuth client ID, client secret, or refresh token is missing.'];
