@@ -10,6 +10,7 @@ class GoogleDocsService
 {
     public function __construct(
         protected GenericService $generic,
+        protected GoogleDocsWriteService $writer,
     ) {
     }
 
@@ -76,6 +77,11 @@ class GoogleDocsService
             ->get($exportUrl);
 
         if (!$response->successful()) {
+            $apiFallback = $this->fetchWithAuthenticatedDrive($documentId, $format);
+            if (($apiFallback["success"] ?? false) === true) {
+                return $apiFallback;
+            }
+
             return [
                 'success' => false,
                 'message' => 'Google Docs export returned HTTP ' . $response->status() . '.',
@@ -87,6 +93,11 @@ class GoogleDocsService
 
         $content = $this->stripBom((string) $response->body());
         if (trim($content) === '') {
+            $apiFallback = $this->fetchWithAuthenticatedDrive($documentId, $format);
+            if (($apiFallback["success"] ?? false) === true) {
+                return $apiFallback;
+            }
+
             return [
                 'success' => false,
                 'message' => 'Google Docs export returned an empty response.',
@@ -113,6 +124,51 @@ class GoogleDocsService
             'content' => $content,
             'plain_text' => $plainText,
             'preview' => mb_substr($plainText, 0, $this->maxPreviewChars()),
+        ];
+    }
+
+    protected function fetchWithAuthenticatedDrive(string $documentId, string $format): array
+    {
+        $api = $this->writer->exportDocumentContent($documentId, $format);
+        if (($api["success"] ?? false) !== true) {
+            return array_merge([
+                "success" => false,
+                "document_id" => $documentId,
+                "format" => $format,
+            ], $api);
+        }
+
+        $content = $this->stripBom((string) ($api["content"] ?? ""));
+        if (trim($content) === "") {
+            return [
+                "success" => false,
+                "message" => "Google Drive API export returned an empty response.",
+                "document_id" => $documentId,
+                "format" => $format,
+                "auth_mode" => (string) ($api["auth_mode"] ?? ""),
+                "connected_email" => (string) ($api["connected_email"] ?? ""),
+            ];
+        }
+
+        $plainText = $format === "html"
+            ? $this->htmlToPlainText($content)
+            : trim($content);
+
+        return [
+            "success" => true,
+            "message" => (string) ($api["message"] ?? "Fetched Google Doc through Google Drive API."),
+            "document_id" => $documentId,
+            "normalized_url" => $this->normalizeDocumentUrl($documentId),
+            "export_url" => null,
+            "format" => $format,
+            "mime_type" => (string) ($api["mime_type"] ?? ""),
+            "byte_length" => strlen($content),
+            "title" => $this->detectTitle($content, $format),
+            "content" => $content,
+            "plain_text" => $plainText,
+            "preview" => mb_substr($plainText, 0, $this->maxPreviewChars()),
+            "auth_mode" => (string) ($api["auth_mode"] ?? ""),
+            "connected_email" => (string) ($api["connected_email"] ?? ""),
         ];
     }
 

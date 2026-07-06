@@ -122,27 +122,68 @@
             <h2 class="text-lg font-semibold text-gray-900">OAuth user write credentials</h2>
             <p class="mt-1 text-sm text-gray-500">Use this when docs should be created directly under the authenticated Google mailbox.</p>
         </div>
-        <div class="grid gap-4 md:grid-cols-2">
-            <label class="block md:col-span-2"><span class="text-sm font-medium text-gray-700">Client ID</span><input x-model="oauth.oauth_client_id" type="text" class="mt-1 w-full rounded-lg border-gray-300 focus:border-sky-500 focus:ring-sky-500" placeholder="Google OAuth client ID"></label>
-            <label class="block"><span class="text-sm font-medium text-gray-700">Client secret</span><input x-model="oauth.oauth_client_secret" type="password" class="mt-1 w-full rounded-lg border-gray-300 focus:border-sky-500 focus:ring-sky-500" placeholder="Google OAuth client secret"></label>
-            <label class="block"><span class="text-sm font-medium text-gray-700">Refresh token</span><input x-model="oauth.oauth_refresh_token" type="password" class="mt-1 w-full rounded-lg border-gray-300 focus:border-sky-500 focus:ring-sky-500" placeholder="Google OAuth refresh token"></label>
+        <div class="rounded-xl border border-blue-200 bg-blue-50 p-4 text-sm text-blue-900 space-y-3">
+            <p class="font-semibold">Exact setup for <span class="font-mono">contact@michaelperes.com</span></p>
+            <ol class="list-decimal space-y-3 pl-5 text-blue-800">
+                <li>Open <a href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noopener" class="font-medium text-blue-700 underline hover:text-blue-900">Google Cloud Console → Credentials</a> and make sure you are in the <strong>same project</strong> as the OAuth client used on this page.</li>
+                <li>If Google shows the consent warning, open <a href="https://console.cloud.google.com/apis/credentials/consent" target="_blank" rel="noopener" class="font-medium text-blue-700 underline hover:text-blue-900">OAuth consent screen</a>, fill the app name, support email, and developer contact email, choose <strong>External</strong>, save, and come back to Credentials.</li>
+                <li>Enable both APIs in that same project <strong>before</strong> testing write access: <a href="https://console.cloud.google.com/apis/library/drive.googleapis.com" target="_blank" rel="noopener" class="font-medium text-blue-700 underline hover:text-blue-900">Google Drive API</a> and <a href="https://console.cloud.google.com/apis/library/docs.googleapis.com" target="_blank" rel="noopener" class="font-medium text-blue-700 underline hover:text-blue-900">Google Docs API</a>. If Google says an API was just enabled, wait a few minutes and retry.</li>
+                <li>From Credentials, open or create the OAuth client. It must be a <strong>Web application</strong>. On the client page, under <strong>Authorized redirect URIs</strong>, click <strong>Add URI</strong> and paste <code class="rounded bg-blue-100 px-1.5 py-0.5 text-xs">https://developers.google.com/oauthplayground</code>. <strong>Do not</strong> put that value under Authorized JavaScript origins.</li>
+                <li>Open <a href="https://developers.google.com/oauthplayground" target="_blank" rel="noopener" class="font-medium text-blue-700 underline hover:text-blue-900">OAuth Playground</a>, click the gear icon, check <strong>Use your own OAuth credentials</strong>, paste the OAuth client ID and client secret from Google Cloud, then click <strong>Close</strong>.</li>
+                <li>In OAuth Playground Step 1, use the single scopes input and paste both scopes into the <strong>same box</strong>, separated by a space: <code class="rounded bg-blue-100 px-1.5 py-0.5 text-xs break-all">https://www.googleapis.com/auth/documents https://www.googleapis.com/auth/drive.file</code>.</li>
+                <li>Click <strong>Authorize APIs</strong>, sign in as <span class="font-mono">contact@michaelperes.com</span>, and allow access. If you see <span class="font-mono">redirect_uri_mismatch</span>, go back to the OAuth client and fix the Authorized redirect URI step above.</li>
+                <li>In OAuth Playground Step 2, click <strong>Exchange authorization code for tokens</strong>. Copy the <strong>refresh token only</strong> from the response and save it into the <strong>Google OAuth refresh token</strong> field below.</li>
+                <li>After the three OAuth credential fields below are saved through HexaCore Credentials, go back to the top card and click <strong>Verify write identity</strong>. Then run <strong>Smoke test create/update/delete</strong>.</li>
+                <li>When write verification passes, click <strong>Create export folder</strong> to create <span class="font-mono">scalemypublication.com, publish exports</span> and save that folder ID as the default export folder.</li>
+            </ol>
+            <div class="rounded-lg border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900 space-y-2">
+                <p class="font-semibold">Common failure fixes</p>
+                <ul class="list-disc space-y-1 pl-5">
+                    <li>If Google shows <span class="font-mono">redirect_uri_mismatch</span>, the OAuth client is missing <code class="rounded bg-amber-100 px-1.5 py-0.5">https://developers.google.com/oauthplayground</code> under <strong>Authorized redirect URIs</strong>.</li>
+                    <li>If write verification says Drive API is disabled, enable <a href="https://console.cloud.google.com/apis/library/drive.googleapis.com" target="_blank" rel="noopener" class="font-medium text-amber-800 underline hover:text-amber-950">Google Drive API</a> and <a href="https://console.cloud.google.com/apis/library/docs.googleapis.com" target="_blank" rel="noopener" class="font-medium text-amber-800 underline hover:text-amber-950">Google Docs API</a> in the same project, wait a few minutes, and test again.</li>
+                    <li>These fields are stored through the shared <strong>HexaCore credential system</strong>, not as loose package settings.</li>
+                </ul>
+            </div>
         </div>
-        <div class="flex items-center gap-3">
-            <button @click="saveOauth" :disabled="savingOauth" type="button" class="inline-flex items-center gap-2 rounded-lg bg-sky-600 px-4 py-2 text-sm font-medium text-white hover:bg-sky-700 disabled:opacity-50"><svg x-show="savingOauth" x-cloak class="h-4 w-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg><span x-text="savingOauth ? 'Saving…' : 'Save OAuth credentials'"></span></button>
-            <p x-show="oauthResult" x-cloak class="text-sm" :class="oauthResult?.success ? 'text-green-700' : 'text-red-700'" x-text="oauthResult?.message || ''"></p>
+        <div class="grid gap-4 md:grid-cols-2">
+            <div class="md:col-span-2">
+                <x-hexa-credential-field
+                    slug="google-docs"
+                    key-name="oauth_client_id"
+                    label="Google OAuth client ID"
+                    help="Create this in Google Cloud Console under APIs & Services → Credentials. Save it here, then save the client secret and refresh token below."
+                />
+            </div>
+            <x-hexa-credential-field
+                slug="google-docs"
+                key-name="oauth_client_secret"
+                label="Google OAuth client secret"
+                help="Use the client secret from the same OAuth client as the client ID above."
+            />
+            <x-hexa-credential-field
+                slug="google-docs"
+                key-name="oauth_refresh_token"
+                label="Google OAuth refresh token"
+                help="Generate this in OAuth Playground while signed in as contact@michaelperes.com using the Docs and Drive scopes listed above."
+            />
         </div>
     </section>
 
     <section class="rounded-xl border border-gray-200 bg-white p-6 shadow-sm space-y-5">
         <div>
             <h2 class="text-lg font-semibold text-gray-900">Service-account write credentials</h2>
-            <p class="mt-1 text-sm text-gray-500">Use this when Hexa should write through a service account. Ownership still depends on the authenticated writer and Google sharing rules.</p>
+            <p class="mt-1 text-sm text-gray-500">Use this only when Hexa should write through a service account. File ownership and sharing still depend on the authenticated writer and Google Drive rules.</p>
         </div>
-        <label class="block"><span class="text-sm font-medium text-gray-700">Service-account JSON</span><textarea x-model="serviceAccount.service_account_json" rows="10" class="mt-1 w-full rounded-lg border-gray-300 font-mono text-xs focus:border-sky-500 focus:ring-sky-500" placeholder='{type:service_account, ...}'></textarea></label>
-        <div class="flex items-center gap-3">
-            <button @click="saveServiceAccount" :disabled="savingServiceAccount" type="button" class="inline-flex items-center gap-2 rounded-lg bg-sky-600 px-4 py-2 text-sm font-medium text-white hover:bg-sky-700 disabled:opacity-50"><svg x-show="savingServiceAccount" x-cloak class="h-4 w-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg><span x-text="savingServiceAccount ? 'Saving…' : 'Save service account'"></span></button>
-            <p x-show="serviceAccountResult" x-cloak class="text-sm" :class="serviceAccountResult?.success ? 'text-green-700' : 'text-red-700'" x-text="serviceAccountResult?.message || ''"></p>
+        <div class="rounded-xl border border-gray-200 bg-gray-50 p-4 text-sm text-gray-700 space-y-2">
+            <p class="font-semibold text-gray-900">Service-account path</p>
+            <p>Create or manage service accounts in <a href="https://console.cloud.google.com/iam-admin/serviceaccounts" target="_blank" rel="noopener" class="font-medium text-blue-700 underline hover:text-blue-900">Google Cloud Console → Service Accounts</a>. If you use this mode, save the full JSON key below through the shared HexaCore credential field, then click <strong>Verify write identity</strong> in the connection card above.</p>
         </div>
+        <x-hexa-credential-field
+            slug="google-docs"
+            key-name="service_account_json"
+            label="Google service-account JSON"
+            help="Paste the full JSON key as a single value. This is stored through HexaCore CredentialService and used only when Write auth mode is set to Service account write."
+        />
     </section>
 
     <section class="rounded-xl border border-gray-200 bg-white p-6 shadow-sm space-y-5">
