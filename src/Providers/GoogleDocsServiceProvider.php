@@ -2,6 +2,7 @@
 
 namespace hexa_package_google_docs\Providers;
 
+use hexa_core\Support\PackageAssetRegistry;
 use Illuminate\Support\ServiceProvider;
 use hexa_package_google_docs\Services\GoogleDocsService;
 use hexa_package_google_docs\Services\GoogleDocsWriteService;
@@ -34,6 +35,10 @@ class GoogleDocsServiceProvider extends ServiceProvider
 
         $this->loadRoutesFrom(__DIR__ . '/../../routes/google-docs.php');
         $this->loadViewsFrom(__DIR__ . '/../../resources/views', 'google-docs');
+        app(PackageAssetRegistry::class)->register("google-docs", dirname(__DIR__, 2) . "/resources/js", [
+            "settings.js",
+        ]);
+
         $this->loadMigrationsFrom(__DIR__ . '/../../database/migrations');
 
         $this->publishes([

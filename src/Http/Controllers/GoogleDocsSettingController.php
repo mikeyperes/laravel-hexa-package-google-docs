@@ -23,19 +23,39 @@ class GoogleDocsSettingController extends Controller
     public function index(): View
     {
         $context = $this->write->writeContext();
-        return view('google-docs::settings.index', [
-            'defaultFormat' => (string) Setting::getValue('google_docs_default_format', config('google-docs.default_format', 'txt')),
-            'timeoutSeconds' => (int) Setting::getValue('google_docs_timeout_seconds', config('google-docs.timeout_seconds', 15)),
-            'userAgent' => (string) Setting::getValue('google_docs_user_agent', config('google-docs.user_agent', 'HexaGoogleDocs/1.0')),
-            'maxPreviewChars' => (int) Setting::getValue('google_docs_max_preview_chars', config('google-docs.max_preview_chars', 1600)),
-            'authMode' => (string) ($context['auth_mode'] ?? 'public_read'),
-            'ownerEmail' => (string) ($context['owner_email'] ?? ''),
-            'defaultFolderId' => (string) ($context['default_folder_id'] ?? ''),
-            'connectedEmail' => (string) ($context['connected_email'] ?? ''),
-            'hasOauthCredentials' => (bool) ($context['has_oauth_credentials'] ?? false),
-            'hasServiceAccount' => (bool) ($context['has_service_account'] ?? false),
-            'hasWriteAccess' => (bool) ($context['has_write_access'] ?? false),
-            'oauthClientIdMasked' => $this->credentials->getMasked('google-docs', 'oauth_client_id'),
+        $general = [
+            "default_format" => (string) Setting::getValue("google_docs_default_format", config("google-docs.default_format", "txt")),
+            "timeout_seconds" => (int) Setting::getValue("google_docs_timeout_seconds", config("google-docs.timeout_seconds", 15)),
+            "user_agent" => (string) Setting::getValue("google_docs_user_agent", config("google-docs.user_agent", "HexaGoogleDocs/1.0")),
+            "max_preview_chars" => (int) Setting::getValue("google_docs_max_preview_chars", config("google-docs.max_preview_chars", 1600)),
+            "auth_mode" => (string) ($context["auth_mode"] ?? "public_read"),
+            "owner_email" => (string) ($context["owner_email"] ?? ""),
+            "default_folder_id" => (string) ($context["default_folder_id"] ?? ""),
+        ];
+
+        return view("google-docs::settings.index", [
+            "settingsConfig" => [
+                "context" => [
+                    "auth_mode" => $general["auth_mode"],
+                    "owner_email" => $general["owner_email"],
+                    "default_folder_id" => $general["default_folder_id"],
+                    "connected_email" => (string) ($context["connected_email"] ?? ""),
+                    "has_oauth_credentials" => (bool) ($context["has_oauth_credentials"] ?? false),
+                    "has_service_account" => (bool) ($context["has_service_account"] ?? false),
+                    "has_write_access" => (bool) ($context["has_write_access"] ?? false),
+                ],
+                "general" => $general,
+                "defaultFormat" => $general["default_format"],
+                "routes" => [
+                    "general" => route("settings.google-docs.general"),
+                    "oauth" => route("settings.google-docs.oauth"),
+                    "serviceAccount" => route("settings.google-docs.service-account"),
+                    "testRead" => route("settings.google-docs.test-read"),
+                    "testWrite" => route("settings.google-docs.test-write"),
+                    "createFolder" => route("settings.google-docs.create-folder"),
+                    "smoke" => route("settings.google-docs.smoke"),
+                ],
+            ],
         ]);
     }
 
