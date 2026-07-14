@@ -1,7 +1,7 @@
 <?php
 
 return [
-    'version' => '1.1.3',
+    'version' => '1.1.4',
     'enabled' => env('HWS_GOOGLE_DOCS_ENABLED', true),
     'default_format' => env('HWS_GOOGLE_DOCS_DEFAULT_FORMAT', 'txt'),
     'timeout_seconds' => (int) env('HWS_GOOGLE_DOCS_TIMEOUT_SECONDS', 15),
