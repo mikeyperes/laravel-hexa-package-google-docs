@@ -213,5 +213,8 @@
     </section>
 </div>
 
-<script>@include('google-docs::scripts.settings-index.block-1-part-1')</script>
+@push('scripts')
+<script type="application/json" id="google-docs-settings-config">{!! Illuminate\Support\Js::encode($settingsConfig) !!}</script>
+<x-hexa-package-script package="google-docs" :version="config('google-docs.version')" asset="settings.js" />
+@endpush
 @endsection

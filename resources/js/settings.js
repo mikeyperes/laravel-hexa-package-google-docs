@@ -1,5 +1,6 @@
-
-function googleDocsSettings() {
+window.googleDocsSettings = function () {
+    const configElement = document.getElementById("google-docs-settings-config");
+    const config = configElement ? JSON.parse(configElement.textContent || "{}") : {};
     return {
         savingGeneral: false,
         savingOauth: false,
@@ -14,28 +15,12 @@ function googleDocsSettings() {
         readResult: null,
         writeResult: null,
         folderResult: null,
-        context: {
-            auth_mode: @js($authMode),
-            owner_email: @js($ownerEmail),
-            default_folder_id: @js($defaultFolderId),
-            connected_email: @js($connectedEmail),
-            has_oauth_credentials: @js($hasOauthCredentials),
-            has_service_account: @js($hasServiceAccount),
-            has_write_access: @js($hasWriteAccess),
-        },
-        general: {
-            default_format: @js($defaultFormat),
-            timeout_seconds: @js($timeoutSeconds),
-            user_agent: @js($userAgent),
-            max_preview_chars: @js($maxPreviewChars),
-            auth_mode: @js($authMode),
-            owner_email: @js($ownerEmail),
-            default_folder_id: @js($defaultFolderId),
-        },
+        context: { ...(config.context || {}) },
+        general: { ...(config.general || {}) },
         oauth: { oauth_client_id: '', oauth_client_secret: '', oauth_refresh_token: '' },
         serviceAccount: { service_account_json: '' },
         folder: { folder_name: "scalemypublication.com, publish exports", parent_folder_id: "", set_as_default: true },
-        read: { doc_url: '', format: @js($defaultFormat) },
+        read: { doc_url: "", format: config.defaultFormat || "txt" },
         init() {},
         async postJson(url, body) {
             const response = await fetch(url, {
@@ -43,7 +28,7 @@ function googleDocsSettings() {
                 headers: {
                     'Content-Type': 'application/json',
                     'Accept': 'application/json',
-                    'X-CSRF-TOKEN': @js(csrf_token()),
+                    'X-CSRF-TOKEN': document.head.querySelector("[name=csrf-token]")?.content || "",
                 },
                 body: JSON.stringify(body),
             });
@@ -53,7 +38,7 @@ function googleDocsSettings() {
         async saveGeneral() {
             this.savingGeneral = true; this.generalResult = null;
             try {
-                const { data } = await this.postJson(@js(route('settings.google-docs.general')), this.general);
+                const { data } = await this.postJson(config.routes.general, this.general);
                 this.generalResult = data;
                 if (data?.success) {
                     this.context.auth_mode = this.general.auth_mode;
@@ -67,7 +52,7 @@ function googleDocsSettings() {
         async saveOauth() {
             this.savingOauth = true; this.oauthResult = null;
             try {
-                const { data } = await this.postJson(@js(route('settings.google-docs.oauth')), this.oauth);
+                const { data } = await this.postJson(config.routes.oauth, this.oauth);
                 this.oauthResult = data;
                 if (data?.success) {
                     this.context.has_oauth_credentials = true;
@@ -81,7 +66,7 @@ function googleDocsSettings() {
         async saveServiceAccount() {
             this.savingServiceAccount = true; this.serviceAccountResult = null;
             try {
-                const { data } = await this.postJson(@js(route('settings.google-docs.service-account')), this.serviceAccount);
+                const { data } = await this.postJson(config.routes.serviceAccount, this.serviceAccount);
                 this.serviceAccountResult = data;
                 if (data?.success) {
                     this.context.has_service_account = true;
@@ -95,7 +80,7 @@ function googleDocsSettings() {
         async runReadTest() {
             this.testingRead = true; this.readResult = null;
             try {
-                const { data } = await this.postJson(@js(route('settings.google-docs.test-read')), this.read);
+                const { data } = await this.postJson(config.routes.testRead, this.read);
                 this.readResult = data;
             } catch (error) {
                 this.readResult = { success: false, message: error.message };
@@ -104,7 +89,7 @@ function googleDocsSettings() {
         async testWrite() {
             this.testingWrite = true; this.writeResult = null;
             try {
-                const { data } = await this.postJson(@js(route('settings.google-docs.test-write')), {});
+                const { data } = await this.postJson(config.routes.testWrite, {});
                 this.writeResult = data;
                 if (data?.connected_email !== undefined) this.context.connected_email = data.connected_email || '';
             } catch (error) {
@@ -114,7 +99,7 @@ function googleDocsSettings() {
         async createFolder() {
             this.creatingFolder = true; this.folderResult = null;
             try {
-                const { data } = await this.postJson(@js(route("settings.google-docs.create-folder")), this.folder);
+                const { data } = await this.postJson(config.routes.createFolder, this.folder);
                 this.folderResult = data;
                 if (data?.success && data?.folder_id) {
                     this.general.default_folder_id = data.folder_id;
@@ -127,7 +112,7 @@ function googleDocsSettings() {
         async smokeWrite() {
             this.smokingWrite = true; this.writeResult = null;
             try {
-                const { data } = await this.postJson(@js(route('settings.google-docs.smoke')), {});
+                const { data } = await this.postJson(config.routes.smoke, {});
                 this.writeResult = data;
             } catch (error) {
                 this.writeResult = { success: false, message: error.message };
@@ -138,4 +123,4 @@ function googleDocsSettings() {
             return this.readResult.format === 'html' ? (this.readResult.plain_text || this.readResult.content || '') : (this.readResult.content || '');
         },
     };
-}
+};
