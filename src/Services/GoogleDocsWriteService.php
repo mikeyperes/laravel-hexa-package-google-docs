@@ -562,12 +562,11 @@ class GoogleDocsWriteService
     protected function req(string $method, string $url, array $headers = [], ?string $body = null, bool $raw = false): array
     {
         $ch = curl_init(); curl_setopt_array($ch, [CURLOPT_URL => $url, CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => 60, CURLOPT_FOLLOWLOCATION => true, CURLOPT_MAXREDIRS => 5, CURLOPT_SSL_VERIFYPEER => true, CURLOPT_CUSTOMREQUEST => strtoupper($method), CURLOPT_HTTPHEADER => array_merge(['Accept: application/json'], $headers)]); if (null !== $body) curl_setopt($ch, CURLOPT_POSTFIELDS, $body);
-        $out = curl_exec($ch); $code = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE); $err = curl_error($ch); curl_close($ch);
+        $out = curl_exec($ch); $code = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE); $err = curl_error($ch);
         if (false === $out) return ['success' => false, 'error' => $err ?: 'cURL request failed.', 'status' => $code];
         if ($code < 200 || $code >= 300) { $msg = 'HTTP ' . $code; $json = json_decode($out, true); if (is_array($json)) $msg = $json['error']['message'] ?? $json['message'] ?? $msg; return ['success' => false, 'error' => $msg, 'status' => $code]; }
         if ($raw) return ['success' => true, 'data' => $out, 'status' => $code];
         $json = json_decode($out, true); if (JSON_ERROR_NONE !== json_last_error()) return ['success' => false, 'error' => 'Invalid JSON response from Google API.', 'status' => $code]; return ['success' => true, 'data' => $json, 'status' => $code];
     }
 }
-
 

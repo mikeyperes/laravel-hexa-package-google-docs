@@ -1,8 +1,12 @@
 {
   "name": "hexawebsystems/laravel-hexa-package-google-docs",
-  "description": "Hexa package for reading public Google Docs content without API credentials.",
+  "description": "Shared Google Docs reading, writing, permission validation, editorial scanning, and document-copy workflows.",
   "type": "library",
   "license": "MIT",
+  "require": {
+    "php": "^8.2",
+    "hexawebsystems/laravel-hexa-package-google-drive": "*"
+  },
   "autoload": {
     "psr-4": {
       "hexa_package_google_docs\\": "src/"

@@ -4,6 +4,7 @@ namespace hexa_package_google_docs\Providers;
 
 use hexa_core\Support\PackageAssetRegistry;
 use Illuminate\Support\ServiceProvider;
+use hexa_package_google_docs\Services\GoogleDocumentWorkflowService;
 use hexa_package_google_docs\Services\GoogleDocsService;
 use hexa_package_google_docs\Services\GoogleDocsWriteService;
 
@@ -23,6 +24,15 @@ class GoogleDocsServiceProvider extends ServiceProvider
         $this->app->singleton(GoogleDocsWriteService::class, function ($app) {
             return new GoogleDocsWriteService(
                 $app->make(\hexa_core\Services\CredentialService::class)
+            );
+        });
+
+        $this->app->singleton(GoogleDocumentWorkflowService::class, function ($app) {
+            return new GoogleDocumentWorkflowService(
+                $app->make(\hexa_package_google_drive\Services\GoogleDriveService::class),
+                $app->make(\hexa_package_google_drive\Services\GoogleDriveApiClient::class),
+                $app->make(GoogleDocsService::class),
+                $app->make(GoogleDocsWriteService::class),
             );
         });
     }
@@ -109,6 +119,15 @@ $docs->deleteDocument($documentId);
 $docs->smokeTestWrite();</pre>
 HTML;
 
+                $workflowApi = <<<'HTML'
+<pre class="bg-gray-900 text-gray-300 text-xs font-mono p-4 rounded-lg whitespace-pre-wrap">use hexa_package_google_docs\Services\GoogleDocumentWorkflowService;
+$workflow = app(GoogleDocumentWorkflowService::class);
+
+$workflow->inspectPublicEditable($url, $requirements);
+$workflow->createPublicEditableCopy($url, $name, $requirements, $existingCopyId);
+$workflow->scanHtml($html);</pre>
+HTML;
+
                 app(\hexa_core\Services\DocumentationService::class)->register('google-docs', 'Google Docs', 'hexawebsystems/laravel-hexa-package-google-docs', [
                     [
                         'title' => 'Overview',
@@ -121,6 +140,10 @@ HTML;
                     [
                         'title' => 'Write API',
                         'content' => $writeApi,
+                    ],
+                    [
+                        'title' => 'Editorial Intake API',
+                        'content' => $workflowApi,
                     ],
                     [
                         'title' => 'Config Keys',
