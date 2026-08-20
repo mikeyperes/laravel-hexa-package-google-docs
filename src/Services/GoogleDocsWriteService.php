@@ -13,7 +13,12 @@ class GoogleDocsWriteService
     private const DRIVE_API_BASE = 'https://www.googleapis.com/drive/v3';
     private const DOCS_API_BASE = 'https://docs.googleapis.com/v1/documents';
 
-    public function __construct(protected CredentialService $credentials) {}
+    protected GoogleDocumentFormattingService $documentFormatting;
+
+    public function __construct(protected CredentialService $credentials, ?GoogleDocumentFormattingService $documentFormatting = null)
+    {
+        $this->documentFormatting = $documentFormatting ?? new GoogleDocumentFormattingService();
+    }
 
     public function authMode(): string { $v = (string) Setting::getValue('google_docs_auth_mode', config('google-docs.auth_mode', 'public_read')); return in_array($v, ['public_read','oauth_user','service_account'], true) ? $v : 'public_read'; }
     public function ownerEmail(): string { return trim((string) Setting::getValue('google_docs_owner_email', config('google-docs.owner_email', ''))); }
@@ -74,13 +79,16 @@ class GoogleDocsWriteService
         $id = (string) ($import["document_id"] ?? "");
         if ($id === "") return ["success" => false, "message" => "Google Doc import did not return a document ID."];
         $insertedImages = $this->insertMarkedImages($id, $imageMarkers, (string) $token["access_token"]);
-        if (!($insertedImages["success"] ?? false)) { if (!$preserve) $this->deleteDocument($id, true); return ["success" => false, "message" => (string) ($insertedImages["message"] ?? "Failed to insert images into the Google Doc."), "inserted_images" => (int) ($insertedImages["inserted_images"] ?? 0)]; }
+        if (!($insertedImages["success"] ?? false)) { $this->deleteDocument($id, true); return ["success" => false, "message" => (string) ($insertedImages["message"] ?? "Failed to insert images into the Google Doc."), "inserted_images" => (int) ($insertedImages["inserted_images"] ?? 0)]; }
+        $formatting = $this->normalizeImportedDocumentFormatting($id, (string) $token["access_token"]);
+        if (!($formatting["success"] ?? false)) { $this->deleteDocument($id, true); return ["success" => false, "message" => (string) ($formatting["message"] ?? "Failed to normalize Google Doc formatting."), "formatting_verified" => false, "formatting" => $formatting]; }
         $meta = $this->meta($id, (string) $token["access_token"]); if (!($meta["success"] ?? false)) return $meta;
+        $folder = $this->resolveDocumentFolder((array) ($meta["file"] ?? []), (string) $token["access_token"]);
         $shared = $this->ensureOwnerAccess($id, (string) $token["access_token"], (string) ($meta["file"]["owner_email"] ?? ""), (string) ($token["connected_email"] ?? ""));
         $public = $this->ensurePublicEditableAccess($id, (string) $token["access_token"]);
         if (!($public["success"] ?? false)) { if (!$preserve) $this->deleteDocument($id, true); return ["success" => false, "message" => (string) ($public["message"] ?? "Failed to make the Google Doc publicly editable by link.")]; }
         if ($preserve && $previousId && $previousId !== $id) { $this->deleteDocument($previousId, true); }
-        return ["success" => true, "message" => $preserve ? "Google Doc updated successfully." : "Google Doc created successfully.", "document_id" => $id, "normalized_url" => "https://docs.google.com/document/d/" . $id . "/edit", "web_view_link" => (string) ($meta["file"]["web_view_link"] ?? ""), "owner_email" => (string) ($meta["file"]["owner_email"] ?? ""), "connected_email" => (string) ($token["connected_email"] ?? ""), "shared_with_requested_owner" => $shared, "public_editable" => true, "public_role" => (string) ($public["role"] ?? "writer"), "public_access" => "anyone_with_link", "file" => $meta["file"], "inserted_images" => (int) ($insertedImages["inserted_images"] ?? 0)];
+        return ["success" => true, "message" => $preserve ? "Google Doc updated successfully." : "Google Doc created successfully.", "document_id" => $id, "normalized_url" => "https://docs.google.com/document/d/" . $id . "/edit", "web_view_link" => (string) ($meta["file"]["web_view_link"] ?? ""), "owner_email" => (string) ($meta["file"]["owner_email"] ?? ""), "connected_email" => (string) ($token["connected_email"] ?? ""), "shared_with_requested_owner" => $shared, "public_editable" => true, "public_role" => (string) ($public["role"] ?? "writer"), "public_access" => "anyone_with_link", "master_folder_id" => (string) ($folder["id"] ?? ""), "master_folder_name" => (string) ($folder["name"] ?? ""), "master_folder_url" => (string) ($folder["web_view_link"] ?? ""), "formatting_verified" => true, "formatting" => $formatting, "file" => $meta["file"], "inserted_images" => (int) ($insertedImages["inserted_images"] ?? 0)];
     }
 
 
@@ -381,11 +389,96 @@ class GoogleDocsWriteService
         return $positions;
     }
 
+    protected function normalizeImportedDocumentFormatting(string $id, string $token): array
+    {
+        $document = $this->req(
+            "GET",
+            self::DOCS_API_BASE . "/" . urlencode($id),
+            $this->auth($token)
+        );
+        if (!($document["success"] ?? false)) {
+            return ["success" => false, "message" => $document["error"] ?? "Failed to inspect imported Google Doc formatting."];
+        }
+
+        $requests = $this->buildDocumentFormattingRequests((array) ($document["data"] ?? []));
+        if ($requests === []) {
+            return ["success" => false, "message" => "Imported Google Doc did not contain formatable article paragraphs."];
+        }
+
+        $update = $this->req(
+            "POST",
+            self::DOCS_API_BASE . "/" . urlencode($id) . ":batchUpdate",
+            array_merge($this->auth($token), ["Content-Type: application/json"]),
+            json_encode(["requests" => $requests], JSON_UNESCAPED_SLASHES)
+        );
+        if (!($update["success"] ?? false)) {
+            return ["success" => false, "message" => $update["error"] ?? "Google Docs native formatting update failed."];
+        }
+
+        $verifiedDocument = $this->req(
+            "GET",
+            self::DOCS_API_BASE . "/" . urlencode($id),
+            $this->auth($token)
+        );
+        if (!($verifiedDocument["success"] ?? false)) {
+            return ["success" => false, "message" => $verifiedDocument["error"] ?? "Failed to verify Google Doc formatting after update."];
+        }
+
+        $verification = $this->verifyDocumentFormatting((array) ($verifiedDocument["data"] ?? []));
+        $verification["request_count"] = count($requests);
+
+        return $verification;
+    }
+
+    /**
+     * Build explicit Google Docs API requests so HTML-import defaults cannot
+     * silently inflate headings or collapse paragraph spacing.
+     *
+     * @return array<int,array<string,mixed>>
+     */
+    protected function buildDocumentFormattingRequests(array $document): array
+    {
+        return $this->documentFormatting->buildRequests($document);
+    }
+
+    protected function verifyDocumentFormatting(array $document): array
+    {
+        return $this->documentFormatting->verify($document);
+    }
+
     protected function meta(string $id, string $token): array
     {
-        $res = $this->req('GET', self::DRIVE_API_BASE . '/files/' . urlencode($id) . '?fields=id,name,webViewLink,owners(emailAddress)', $this->auth($token));
+        $res = $this->req('GET', self::DRIVE_API_BASE . '/files/' . urlencode($id) . '?fields=id,name,webViewLink,parents,owners(emailAddress)', $this->auth($token));
         if (!($res['success'] ?? false)) return ['success' => false, 'message' => $res['error'] ?? 'Failed to load Google Doc metadata.'];
-        $f = (array) $res['data']; return ['success' => true, 'file' => ['id' => (string) ($f['id'] ?? ''), 'name' => (string) ($f['name'] ?? ''), 'web_view_link' => (string) ($f['webViewLink'] ?? ''), 'owner_email' => (string) ($f['owners'][0]['emailAddress'] ?? '')]];
+        $f = (array) $res['data']; return ['success' => true, 'file' => ['id' => (string) ($f['id'] ?? ''), 'name' => (string) ($f['name'] ?? ''), 'web_view_link' => (string) ($f['webViewLink'] ?? ''), 'owner_email' => (string) ($f['owners'][0]['emailAddress'] ?? ''), 'parent_ids' => array_values(array_filter(array_map('strval', (array) ($f['parents'] ?? []))))]];
+    }
+
+    protected function resolveDocumentFolder(array $file, string $token): array
+    {
+        $folderId = trim((string) (($file["parent_ids"][0] ?? null) ?: $this->defaultFolderId()));
+        if ($folderId === "") {
+            return ["id" => "", "name" => "My Drive", "web_view_link" => "https://drive.google.com/drive/my-drive"];
+        }
+
+        $fallback = [
+            "id" => $folderId,
+            "name" => "Google Drive folder",
+            "web_view_link" => "https://drive.google.com/drive/folders/" . $folderId,
+        ];
+        $res = $this->req(
+            "GET",
+            self::DRIVE_API_BASE . "/files/" . urlencode($folderId) . "?fields=id,name,webViewLink",
+            $this->auth($token)
+        );
+        if (!($res["success"] ?? false)) {
+            return $fallback;
+        }
+
+        return [
+            "id" => (string) ($res["data"]["id"] ?? $folderId),
+            "name" => (string) ($res["data"]["name"] ?? $fallback["name"]),
+            "web_view_link" => (string) ($res["data"]["webViewLink"] ?? $fallback["web_view_link"]),
+        ];
     }
 
     protected function serviceAccountJson(): string
@@ -569,4 +662,3 @@ class GoogleDocsWriteService
         $json = json_decode($out, true); if (JSON_ERROR_NONE !== json_last_error()) return ['success' => false, 'error' => 'Invalid JSON response from Google API.', 'status' => $code]; return ['success' => true, 'data' => $json, 'status' => $code];
     }
 }
-
