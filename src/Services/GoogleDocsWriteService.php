@@ -58,10 +58,93 @@ class GoogleDocsWriteService
         return ['success' => true, 'message' => 'Google Docs write connection verified' . ($email ? ' as ' . $email : '') . '.', 'connected_email' => $email];
     }
 
-    public function createDocumentFromHtml(string $title, string $html): array { return $this->export(null, $title, $html); }
+    /** @return array<string, mixed> */
+    public function testFolderAccess(string $folderId): array
+    {
+        $folderId = trim($folderId);
+        if ($folderId === '') {
+            return ['success' => false, 'message' => 'A Google Drive folder ID is required.'];
+        }
+
+        $token = $this->token();
+        if (!($token['success'] ?? false)) {
+            return $token;
+        }
+
+        $authMode = (string) ($token['auth_mode'] ?? $this->authMode());
+        $connectedEmail = trim((string) ($token['connected_email'] ?? ''));
+        $url = self::DRIVE_API_BASE . '/files/' . rawurlencode($folderId)
+            . '?fields=id,name,mimeType,webViewLink,capabilities(canAddChildren,canEdit)&supportsAllDrives=true';
+        $response = $this->req('GET', $url, $this->auth((string) $token['access_token']));
+
+        if (!($response['success'] ?? false)) {
+            $status = (int) ($response['status'] ?? 0);
+            $error = trim((string) ($response['error'] ?? 'Google Drive denied access.'));
+            $normalizedError = mb_strtolower($error);
+            $scopeRequired = $status === 403 && (
+                str_contains($normalizedError, 'insufficient authentication scope')
+                || str_contains($normalizedError, 'access_token_scope_insufficient')
+            );
+            $folderUnavailable = $status === 404
+                || str_contains($normalizedError, 'not found');
+
+            $reason = 'folder_access_denied';
+            $message = 'The active Google Docs writer'.($connectedEmail !== '' ? ' ('.$connectedEmail.')' : '')
+                .' cannot open this folder: '.$error;
+
+            if ($scopeRequired) {
+                $reason = 'drive_scope_required';
+                $message = 'The Google Docs credentials are valid, but the refresh token does not include the full Google Drive scope required for an existing folder. Generate a new token with https://www.googleapis.com/auth/documents and https://www.googleapis.com/auth/drive, then test again.';
+            } elseif ($authMode === 'oauth_user' && $folderUnavailable) {
+                $reason = 'folder_not_available_to_app';
+                $message = 'The Google Docs credentials are valid, but this folder is not available to the app. Create the shared uploads folder from the Service Order Portal settings and use the generated folder link.';
+            }
+
+            return [
+                'success' => false,
+                'message' => $message,
+                'auth_mode' => $authMode,
+                'connected_email' => $connectedEmail !== '' ? $connectedEmail : null,
+                'credentials_valid' => $status !== 401,
+                'reason' => $reason,
+            ];
+        }
+
+        $folder = (array) ($response['data'] ?? []);
+        $isFolder = (string) ($folder['mimeType'] ?? '') === 'application/vnd.google-apps.folder';
+        $canAddChildren = (bool) data_get($folder, 'capabilities.canAddChildren', false);
+        $canEdit = (bool) data_get($folder, 'capabilities.canEdit', false);
+
+        if (!$isFolder || !$canAddChildren || !$canEdit) {
+            return [
+                'success' => false,
+                'message' => !$isFolder
+                    ? 'The supplied Google Drive URL does not point to a folder.'
+                    : 'The active Google Docs writer'.($connectedEmail !== '' ? ' ('.$connectedEmail.')' : '').' can open this folder but cannot add files. Grant that account Editor access and test again.',
+                'auth_mode' => $authMode,
+                'connected_email' => $connectedEmail !== '' ? $connectedEmail : null,
+                'can_add_children' => $canAddChildren,
+                'can_edit' => $canEdit,
+            ];
+        }
+
+        return [
+            'success' => true,
+            'message' => 'Folder access verified for the active Google Docs writer'.($connectedEmail !== '' ? ' ('.$connectedEmail.')' : '').'.',
+            'folder_id' => (string) ($folder['id'] ?? $folderId),
+            'folder_name' => trim((string) ($folder['name'] ?? '')),
+            'folder_url' => trim((string) ($folder['webViewLink'] ?? '')) ?: 'https://drive.google.com/drive/folders/'.rawurlencode($folderId),
+            'auth_mode' => $authMode,
+            'connected_email' => $connectedEmail !== '' ? $connectedEmail : null,
+            'can_add_children' => true,
+            'can_edit' => true,
+        ];
+    }
+
+    public function createDocumentFromHtml(string $title, string $html, ?string $folderId = null): array { return $this->export(null, $title, $html, false, $folderId); }
     public function updateDocumentFromHtml(string $id, string $title, string $html): array { return $this->export($id, $title, $html, true); }
 
-    public function export(?string $id, string $title, string $html, bool $preserve = false): array
+    public function export(?string $id, string $title, string $html, bool $preserve = false, ?string $folderId = null): array
     {
         $token = $this->token(); if (!($token["success"] ?? false)) return $token;
         if (trim(strip_tags($html)) === "") return ["success" => false, "message" => "Google Doc export requires non-empty article content."];
@@ -69,7 +152,7 @@ class GoogleDocsWriteService
         $imagePayload = $this->prepareInlineImageMarkers($html);
         $htmlForImport = (string) ($imagePayload["html"] ?? $html);
         $imageMarkers = is_array($imagePayload["images"] ?? null) ? $imagePayload["images"] : [];
-        $import = $this->importHtmlDocument((trim($title) ?: "Untitled Document"), $htmlForImport, (string) $token["access_token"]);
+        $import = $this->importHtmlDocument((trim($title) ?: "Untitled Document"), $htmlForImport, (string) $token["access_token"], $folderId);
         if (!($import["success"] ?? false)) return $import;
         $id = (string) ($import["document_id"] ?? "");
         if ($id === "") return ["success" => false, "message" => "Google Doc import did not return a document ID."];
@@ -219,13 +302,14 @@ class GoogleDocsWriteService
         $this->req('PATCH', self::DRIVE_API_BASE . '/files/' . urlencode($id) . '?fields=id', array_merge($this->auth((string) $token), ['Content-Type: application/json']), json_encode(['name' => $title], JSON_UNESCAPED_SLASHES));
     }
 
-    protected function importHtmlDocument(string $title, string $html, string $token): array
+    protected function importHtmlDocument(string $title, string $html, string $token, ?string $folderId = null): array
     {
         $html = $this->embedRemoteImagesForImport($html);
         $boundary = 'hexa-google-docs-' . md5($title . '|' . microtime(true));
         $metadata = ['name' => $title, 'mimeType' => 'application/vnd.google-apps.document'];
-        if ('' !== $this->defaultFolderId()) {
-            $metadata['parents'] = [$this->defaultFolderId()];
+        $folderId = trim((string) $folderId) ?: $this->defaultFolderId();
+        if ($folderId !== '') {
+            $metadata['parents'] = [$folderId];
         }
 
         $body = '--' . $boundary . "
@@ -569,4 +653,3 @@ class GoogleDocsWriteService
         $json = json_decode($out, true); if (JSON_ERROR_NONE !== json_last_error()) return ['success' => false, 'error' => 'Invalid JSON response from Google API.', 'status' => $code]; return ['success' => true, 'data' => $json, 'status' => $code];
     }
 }
-

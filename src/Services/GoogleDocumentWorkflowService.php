@@ -24,7 +24,7 @@ class GoogleDocumentWorkflowService
     /**
      * Verify public edit access and scan a Google Doc without changing it.
      *
-     * @param  array{require_featured_image?:bool,require_h2_headings?:bool}  $requirements
+     * @param  array{require_featured_image?:bool,require_h2_headings?:bool,max_word_count?:int|null}  $requirements
      * @return array<string, mixed>
      */
     public function inspectPublicEditable(string $url, array $requirements = []): array
@@ -94,12 +94,16 @@ class GoogleDocumentWorkflowService
         $scan = $this->scanHtml((string) ($export['content'] ?? ''));
         $requirements = $this->requirements($requirements);
         $errors = [];
+        $warnings = [];
         if ($requirements['require_featured_image'] && ! $scan['featured_image_found']) {
             $errors[] = 'Add the featured image inside the Google Doc, then check the link again.';
         }
         if ($requirements['require_h2_headings'] && ! $scan['headings_h2_only']) {
-            $errors[] = 'Change every document heading to Heading 2 (H2). Found: '.
+            $warnings[] = 'Review the headings that are not Heading 2 (H2): '.
                 implode(', ', $scan['non_h2_headings']).'.';
+        }
+        if ($requirements['max_word_count'] !== null && $scan['word_count'] >= $requirements['max_word_count']) {
+            $errors[] = 'Shorten the article to fewer than '.$requirements['max_word_count'].' words. Current count: '.$scan['word_count'].'.';
         }
 
         $document = $this->documentPayload($reference['id'], $file, $url);
@@ -112,6 +116,7 @@ class GoogleDocumentWorkflowService
                 ? $this->successMessage($scan)
                 : implode(' ', $errors),
             'errors' => $errors,
+            'warnings' => $warnings,
             'document' => $document,
             'scan' => $scan,
         ];
@@ -120,7 +125,7 @@ class GoogleDocumentWorkflowService
     /**
      * Create or resume an internal copy and ensure that copy is publicly editable.
      *
-     * @param  array{require_featured_image?:bool,require_h2_headings?:bool}  $requirements
+     * @param  array{require_featured_image?:bool,require_h2_headings?:bool,max_word_count?:int|null}  $requirements
      * @return array<string, mixed>
      */
     public function createPublicEditableCopy(
@@ -128,6 +133,7 @@ class GoogleDocumentWorkflowService
         string $copyName,
         array $requirements = [],
         ?string $existingCopyId = null,
+        ?string $folderId = null,
     ): array {
         $source = $this->inspectPublicEditable($sourceUrl, $requirements);
         if (! ($source['success'] ?? false)) {
@@ -150,7 +156,8 @@ class GoogleDocumentWorkflowService
 
             $created = $this->writer->createDocumentFromHtml(
                 $this->copyName($copyName),
-                (string) ($sourceContent['content'] ?? '')
+                (string) ($sourceContent['content'] ?? ''),
+                $folderId,
             );
             if (! ($created['success'] ?? false)) {
                 return $this->failure(
@@ -196,6 +203,7 @@ class GoogleDocumentWorkflowService
             'source' => $source['document'] ?? null,
             'internal_document' => $verified['document'],
             'scan' => $verified['scan'],
+            'warnings' => $verified['warnings'] ?? [],
         ];
     }
 
@@ -259,6 +267,13 @@ class GoogleDocumentWorkflowService
             $urls
         )), 0, 100));
 
+        $plainText = html_entity_decode(strip_tags(preg_replace(
+            '/<\/(?:p|div|li|h[1-6]|blockquote|tr)>/iu',
+            ' ',
+            $html
+        ) ?? $html), ENT_QUOTES | ENT_HTML5, 'UTF-8');
+        $wordCount = preg_match_all('/[\p{L}\p{N}]+(?:[\x{2019}\x{0027}-][\p{L}\p{N}]+)*/u', $plainText, $wordMatches);
+
         return [
             'featured_image_found' => $images !== [],
             'image_count' => count($images),
@@ -269,6 +284,7 @@ class GoogleDocumentWorkflowService
             'headings' => array_slice($headings, 0, 100),
             'headings_h2_only' => $nonH2 === [],
             'non_h2_headings' => array_slice($nonH2, 0, 100),
+            'word_count' => $wordCount === false ? 0 : $wordCount,
         ];
     }
 
@@ -364,7 +380,7 @@ class GoogleDocumentWorkflowService
         ];
     }
 
-    /** @return array{require_featured_image:bool,require_h2_headings:bool} */
+    /** @return array{require_featured_image:bool,require_h2_headings:bool,max_word_count:int|null} */
     private function requirements(array $requirements): array
     {
         return [
@@ -376,6 +392,10 @@ class GoogleDocumentWorkflowService
                 $requirements['require_h2_headings'] ?? false,
                 FILTER_VALIDATE_BOOL
             ),
+            'max_word_count' => isset($requirements['max_word_count'])
+                && (int) $requirements['max_word_count'] > 0
+                    ? (int) $requirements['max_word_count']
+                    : null,
         ];
     }
 
