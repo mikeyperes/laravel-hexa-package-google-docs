@@ -4,15 +4,18 @@ namespace hexa_package_google_docs\Services;
 
 use hexa_core\Models\Setting;
 use hexa_core\Services\GenericService;
+use Illuminate\Http\Client\Response;
 use Illuminate\Support\Facades\Http;
+use Throwable;
 
 class GoogleDocsService
 {
+    private const MAX_RESPONSE_BYTES = 5 * 1024 * 1024;
+
     public function __construct(
         protected GenericService $generic,
         protected GoogleDocsWriteService $writer,
-    ) {
-    }
+    ) {}
 
     public function extractDocumentId(string $value): ?string
     {
@@ -39,12 +42,12 @@ class GoogleDocsService
             return null;
         }
 
-        return 'https://docs.google.com/document/d/' . $documentId . '/edit';
+        return 'https://docs.google.com/document/d/'.$documentId.'/edit';
     }
 
     public function buildExportUrl(string $documentId, string $format = 'txt'): string
     {
-        return 'https://docs.google.com/document/d/' . $documentId . '/export?format=' . $this->normalizeFormat($format);
+        return 'https://docs.google.com/document/d/'.$documentId.'/export?format='.$this->normalizeFormat($format);
     }
 
     public function fetchText(string $value): array
@@ -69,32 +72,46 @@ class GoogleDocsService
 
         $format = $this->normalizeFormat($format);
         $exportUrl = $this->buildExportUrl($documentId, $format);
-        $response = Http::timeout($this->timeoutSeconds())
-            ->withHeaders([
-                'User-Agent' => $this->userAgent(),
-                'Accept' => $format === 'html' ? 'text/html,text/plain;q=0.9,*/*;q=0.8' : 'text/plain,*/*;q=0.8',
-            ])
-            ->get($exportUrl);
+        try {
+            $response = Http::timeout($this->timeoutSeconds())
+                ->withOptions(['stream' => true])
+                ->withHeaders([
+                    'User-Agent' => $this->userAgent(),
+                    'Accept' => $format === 'html' ? 'text/html,text/plain;q=0.9,*/*;q=0.8' : 'text/plain,*/*;q=0.8',
+                ])
+                ->get($exportUrl);
+        } catch (Throwable) {
+            return $this->responseFailure($documentId, $format, $exportUrl);
+        }
 
-        if (!$response->successful()) {
+        if (! $response->successful()) {
+            $this->closeResponseBody($response);
             $apiFallback = $this->fetchWithAuthenticatedDrive($documentId, $format);
-            if (($apiFallback["success"] ?? false) === true) {
+            if (($apiFallback['success'] ?? false) === true) {
+                return $apiFallback;
+            }
+            if (($apiFallback['failure'] ?? null) === 'response_limit') {
                 return $apiFallback;
             }
 
             return [
                 'success' => false,
-                'message' => 'Google Docs export returned HTTP ' . $response->status() . '.',
+                'message' => 'Google Docs export returned HTTP '.$response->status().'.',
                 'document_id' => $documentId,
                 'format' => $format,
                 'export_url' => $exportUrl,
             ];
         }
 
-        $content = $this->stripBom((string) $response->body());
+        $content = $this->readBoundedBody($response);
+        if ($content === null) {
+            return $this->responseFailure($documentId, $format, $exportUrl);
+        }
+
+        $content = $this->stripBom($content);
         if (trim($content) === '') {
             $apiFallback = $this->fetchWithAuthenticatedDrive($documentId, $format);
-            if (($apiFallback["success"] ?? false) === true) {
+            if (($apiFallback['success'] ?? false) === true) {
                 return $apiFallback;
             }
 
@@ -130,51 +147,121 @@ class GoogleDocsService
     protected function fetchWithAuthenticatedDrive(string $documentId, string $format): array
     {
         $api = $this->writer->exportDocumentContent($documentId, $format);
-        if (($api["success"] ?? false) !== true) {
+        if (($api['success'] ?? false) !== true) {
             return array_merge([
-                "success" => false,
-                "document_id" => $documentId,
-                "format" => $format,
+                'success' => false,
+                'document_id' => $documentId,
+                'format' => $format,
             ], $api);
         }
 
-        $content = $this->stripBom((string) ($api["content"] ?? ""));
-        if (trim($content) === "") {
+        $content = $this->stripBom((string) ($api['content'] ?? ''));
+        if (strlen($content) > $this->maxResponseBytes()) {
+            return $this->responseFailure($documentId, $format);
+        }
+
+        if (trim($content) === '') {
             return [
-                "success" => false,
-                "message" => "Google Drive API export returned an empty response.",
-                "document_id" => $documentId,
-                "format" => $format,
-                "auth_mode" => (string) ($api["auth_mode"] ?? ""),
-                "connected_email" => (string) ($api["connected_email"] ?? ""),
+                'success' => false,
+                'message' => 'Google Drive API export returned an empty response.',
+                'document_id' => $documentId,
+                'format' => $format,
+                'auth_mode' => (string) ($api['auth_mode'] ?? ''),
+                'connected_email' => (string) ($api['connected_email'] ?? ''),
             ];
         }
 
-        $plainText = $format === "html"
+        $plainText = $format === 'html'
             ? $this->htmlToPlainText($content)
             : trim($content);
 
         return [
-            "success" => true,
-            "message" => (string) ($api["message"] ?? "Fetched Google Doc through Google Drive API."),
-            "document_id" => $documentId,
-            "normalized_url" => $this->normalizeDocumentUrl($documentId),
-            "export_url" => null,
-            "format" => $format,
-            "mime_type" => (string) ($api["mime_type"] ?? ""),
-            "byte_length" => strlen($content),
-            "title" => $this->detectTitle($content, $format),
-            "content" => $content,
-            "plain_text" => $plainText,
-            "preview" => mb_substr($plainText, 0, $this->maxPreviewChars()),
-            "auth_mode" => (string) ($api["auth_mode"] ?? ""),
-            "connected_email" => (string) ($api["connected_email"] ?? ""),
+            'success' => true,
+            'message' => (string) ($api['message'] ?? 'Fetched Google Doc through Google Drive API.'),
+            'document_id' => $documentId,
+            'normalized_url' => $this->normalizeDocumentUrl($documentId),
+            'export_url' => null,
+            'format' => $format,
+            'mime_type' => (string) ($api['mime_type'] ?? ''),
+            'byte_length' => strlen($content),
+            'title' => $this->detectTitle($content, $format),
+            'content' => $content,
+            'plain_text' => $plainText,
+            'preview' => mb_substr($plainText, 0, $this->maxPreviewChars()),
+            'auth_mode' => (string) ($api['auth_mode'] ?? ''),
+            'connected_email' => (string) ($api['connected_email'] ?? ''),
         ];
     }
 
     protected function normalizeFormat(string $format): string
     {
         return in_array($format, ['txt', 'html'], true) ? $format : $this->defaultFormat();
+    }
+
+    private function readBoundedBody(Response $response): ?string
+    {
+        $maxBytes = $this->maxResponseBytes();
+        $contentLength = trim((string) $response->header('Content-Length', ''));
+        if ($contentLength !== '' && ctype_digit($contentLength) && (int) $contentLength > $maxBytes) {
+            return null;
+        }
+
+        $stream = null;
+        $content = '';
+
+        try {
+            $stream = $response->toPsrResponse()->getBody();
+            while (! $stream->eof()) {
+                $remaining = $maxBytes - strlen($content);
+                $chunk = $stream->read(min(8192, $remaining + 1));
+
+                if ($chunk === '') {
+                    if ($stream->eof()) {
+                        break;
+                    }
+
+                    return null;
+                }
+
+                $content .= $chunk;
+                if (strlen($content) > $maxBytes) {
+                    return null;
+                }
+            }
+        } catch (Throwable) {
+            return null;
+        } finally {
+            if ($stream !== null) {
+                try {
+                    $stream->close();
+                } catch (Throwable) {
+                    // The bounded content or sanitized failure remains authoritative.
+                }
+            }
+        }
+
+        return $content;
+    }
+
+    private function responseFailure(string $documentId, string $format, ?string $exportUrl = null): array
+    {
+        return [
+            'success' => false,
+            'message' => 'Google Docs export exceeded the safe response limit or could not be read.',
+            'failure' => 'response_limit',
+            'document_id' => $documentId,
+            'format' => $format,
+            'export_url' => $exportUrl,
+        ];
+    }
+
+    private function closeResponseBody(Response $response): void
+    {
+        try {
+            $response->toPsrResponse()->getBody()->close();
+        } catch (Throwable) {
+            // The status and authenticated fallback remain authoritative.
+        }
     }
 
     protected function detectTitle(string $content, string $format): string
@@ -246,24 +333,33 @@ class GoogleDocsService
     protected function defaultFormat(): string
     {
         $value = (string) Setting::getValue('google_docs_default_format', config('google-docs.default_format', 'txt'));
+
         return in_array($value, ['txt', 'html'], true) ? $value : 'txt';
     }
 
     protected function timeoutSeconds(): int
     {
         $value = (int) Setting::getValue('google_docs_timeout_seconds', config('google-docs.timeout_seconds', 15));
+
         return max(5, min($value, 60));
     }
 
     protected function maxPreviewChars(): int
     {
         $value = (int) Setting::getValue('google_docs_max_preview_chars', config('google-docs.max_preview_chars', 1600));
+
         return max(200, min($value, 5000));
+    }
+
+    protected function maxResponseBytes(): int
+    {
+        return self::MAX_RESPONSE_BYTES;
     }
 
     protected function userAgent(): string
     {
         $value = trim((string) Setting::getValue('google_docs_user_agent', config('google-docs.user_agent', 'HexaGoogleDocs/1.0')));
+
         return $value !== '' ? $value : 'HexaGoogleDocs/1.0';
     }
 }
