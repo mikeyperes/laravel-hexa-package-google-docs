@@ -112,6 +112,10 @@ HTML;
 $docs = app(GoogleDocsWriteService::class);
 
 $docs->writeContext();
+$docs->accounts();
+// Optional: select a profile without changing the default.
+$accountDocs = $docs->forAccount($accountId);
+$accountDocs->createDocumentFromHtml($title, $html);
 $docs->testWriteConnection();
 $docs->createDocumentFromHtml($title, $html);
 $docs->updateDocumentFromHtml($documentId, $title, $html);

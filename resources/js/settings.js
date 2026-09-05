@@ -2,6 +2,38 @@ window.googleDocsSettings = function () {
     const configElement = document.getElementById("google-docs-settings-config");
     const config = configElement ? JSON.parse(configElement.textContent || "{}") : {};
     return {
+        accounts: config.accounts || [],
+        accountId: config.accountId || 'legacy',
+        defaultAccountId: config.defaultAccountId || 'legacy',
+        newAccountEmail: '',
+        accountResult: null,
+        savingAccount: false,
+        selectAccount() {
+            const url = new URL(window.location.href);
+            url.searchParams.set('account_id', this.accountId);
+            window.location.assign(url.toString());
+        },
+        async addAccount() {
+            this.savingAccount = true; this.accountResult = null;
+            try {
+                const { data } = await this.postJson(config.routes.accounts, { label: this.newAccountEmail });
+                this.accountResult = data;
+                if (data.success) { this.accountId = data.account_id; this.selectAccount(); }
+            } catch (error) { this.accountResult = { success: false, message: error.message }; }
+            finally { this.savingAccount = false; }
+        },
+        async makeDefault() {
+            this.savingAccount = true; this.accountResult = null;
+            try {
+                const { data } = await this.postJson(config.routes.defaultAccount, {});
+                this.accountResult = data;
+                if (data.success) {
+                    this.defaultAccountId = this.accountId;
+                    this.context.connected_email = data.connected_email || '';
+                }
+            } catch (error) { this.accountResult = { success: false, message: error.message }; }
+            finally { this.savingAccount = false; }
+        },
         savingGeneral: false,
         savingOauth: false,
         savingServiceAccount: false,
@@ -30,7 +62,7 @@ window.googleDocsSettings = function () {
                     'Accept': 'application/json',
                     'X-CSRF-TOKEN': document.head.querySelector("[name=csrf-token]")?.content || "",
                 },
-                body: JSON.stringify(body),
+                body: JSON.stringify({ ...body, account_id: this.accountId }),
             });
             const data = await response.json().catch(() => ({}));
             return { response, data };
@@ -91,6 +123,10 @@ window.googleDocsSettings = function () {
             try {
                 const { data } = await this.postJson(config.routes.testWrite, {});
                 this.writeResult = data;
+                if (data?.success) {
+                    this.context.auth_mode = this.general.auth_mode;
+                    this.context.has_write_access = true;
+                }
                 if (data?.connected_email !== undefined) this.context.connected_email = data.connected_email || '';
             } catch (error) {
                 this.writeResult = { success: false, message: error.message };

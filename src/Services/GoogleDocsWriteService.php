@@ -20,8 +20,55 @@ class GoogleDocsWriteService
         $this->documentFormatting = $documentFormatting ?? new GoogleDocumentFormattingService();
     }
 
-    public function authMode(): string { $v = (string) Setting::getValue('google_docs_auth_mode', config('google-docs.auth_mode', 'public_read')); return in_array($v, ['public_read','oauth_user','service_account'], true) ? $v : 'public_read'; }
-    public function ownerEmail(): string { return trim((string) Setting::getValue('google_docs_owner_email', config('google-docs.owner_email', ''))); }
+    // Explicit selections live on a clone, never on the container singleton.
+    protected ?string $selectedAccountId = null;
+
+    public function accountId(): string
+    {
+        return $this->selectedAccountId ?? (string) Setting::getValue('google_docs_default_account', 'legacy');
+    }
+
+    public function forAccount(string $accountId): static
+    {
+        if ($accountId !== 'legacy' && (!preg_match('/^[a-f0-9-]{36}$/D', $accountId)
+            || Setting::getValue('google_docs_account_'.$accountId.'_label') === null)) {
+            throw \Illuminate\Validation\ValidationException::withMessages(['account_id' => 'Select an existing Google Docs account.']);
+        }
+        $writer = clone $this;
+        $writer->selectedAccountId = $accountId;
+        return $writer;
+    }
+
+    public function credentialSlug(): string
+    {
+        return $this->accountId() === 'legacy' ? 'google-docs' : 'google-docs-'.$this->accountId();
+    }
+
+    public function accountSettingKey(string $field): string
+    {
+        return $this->accountId() === 'legacy' ? 'google_docs_'.$field : 'google_docs_account_'.$this->accountId().'_'.$field;
+    }
+
+    protected function accountSetting(string $field, mixed $legacyDefault = ''): mixed
+    {
+        return Setting::getValue($this->accountSettingKey($field), $this->accountId() === 'legacy' ? $legacyDefault : '');
+    }
+
+    /** Only non-secret labels and IDs are returned to the settings page. */
+    public function accounts(): array
+    {
+        $legacy = $this->forAccount('legacy');
+        $accounts = [['id' => 'legacy', 'label' => $legacy->accountSetting('connected_email') ?: 'Existing account']];
+        foreach (Setting::query()->where('group', 'packages')->where('key', 'like', 'google_docs_account_%_label')->get(['key', 'value']) as $setting) {
+            if (preg_match('/^google_docs_account_([a-f0-9-]{36})_label$/D', $setting->key, $match)) {
+                $accounts[] = ['id' => $match[1], 'label' => (string) $setting->value];
+            }
+        }
+        return $accounts;
+    }
+
+    public function authMode(): string { $v = (string) $this->accountSetting('auth_mode', config('google-docs.auth_mode', 'public_read')); return in_array($v, ['public_read','oauth_user','service_account'], true) ? $v : 'public_read'; }
+    public function ownerEmail(): string { return trim((string) $this->accountSetting('owner_email', config('google-docs.owner_email', ''))); }
     public function serviceAccountEmail(): string
     {
         $json = $this->serviceAccountJson();
@@ -29,19 +76,20 @@ class GoogleDocsWriteService
         $serviceAccount = json_decode($json, true);
         return is_array($serviceAccount) ? trim((string) ($serviceAccount['client_email'] ?? '')) : '';
     }
-    public function defaultFolderId(): string { return trim((string) Setting::getValue('google_docs_default_folder_id', config('google-docs.default_folder_id', ''))); }
+    public function defaultFolderId(): string { return trim((string) $this->accountSetting('default_folder_id', config('google-docs.default_folder_id', ''))); }
 
     public function writeContext(): array
     {
         $mode = $this->authMode();
-        $hasOauthCredentials = $this->credentials->exists('google-docs', 'oauth_client_id')
-            && $this->credentials->exists('google-docs', 'oauth_client_secret')
-            && $this->credentials->exists('google-docs', 'oauth_refresh_token');
+        $hasOauthCredentials = $this->credentials->exists($this->credentialSlug(), 'oauth_client_id')
+            && $this->credentials->exists($this->credentialSlug(), 'oauth_client_secret')
+            && $this->credentials->exists($this->credentialSlug(), 'oauth_refresh_token');
         $hasServiceAccount = $this->serviceAccountJson() !== '';
 
         return [
+            'account_id' => $this->accountId(),
             'auth_mode' => $mode,
-            'connected_email' => trim((string) Setting::getValue('google_docs_connected_email', '')) ?: null,
+            'connected_email' => trim((string) $this->accountSetting('connected_email')) ?: null,
             'service_account_email' => $this->serviceAccountEmail() ?: null,
             'owner_email' => $this->ownerEmail(),
             'default_folder_id' => $this->defaultFolderId(),
@@ -59,7 +107,12 @@ class GoogleDocsWriteService
         $res = $this->req('GET', self::DRIVE_API_BASE . '/about?fields=user(emailAddress,displayName)', $this->auth((string) $token['access_token']));
         if (!($res['success'] ?? false)) return ['success' => false, 'message' => $res['error'] ?? 'Google identity lookup failed.'];
         $email = trim((string) ($res['data']['user']['emailAddress'] ?? ''));
-        if ($email !== '') Setting::setValue('google_docs_connected_email', $email, 'packages');
+        if ($email === '') return ['success' => false, 'message' => 'Google did not return a connected account email.'];
+        $expected = $this->accountId() === 'legacy' ? '' : (string) $this->accountSetting('label');
+        if ($this->authMode() === 'oauth_user' && $expected !== '' && strcasecmp($expected, $email) !== 0) {
+            return ['success' => false, 'message' => 'These credentials belong to '.$email.', but the selected account is '.$expected.'. Authorize the selected account and save its credentials.'];
+        }
+        if ($email !== '') Setting::setValue($this->accountSettingKey('connected_email'), $email, 'packages');
         return ['success' => true, 'message' => 'Google Docs write connection verified' . ($email ? ' as ' . $email : '') . '.', 'connected_email' => $email];
     }
 
@@ -146,7 +199,11 @@ class GoogleDocsWriteService
         ];
     }
 
-    public function createDocumentFromHtml(string $title, string $html, ?string $folderId = null): array { return $this->export(null, $title, $html, false, $folderId); }
+    public function createDocumentFromHtml(string $title, string $html, ?string $folderId = null, ?string $accountId = null): array
+    {
+        $writer = $this->forAccount($accountId ?? $this->accountId());
+        return $writer->export(null, $title, $html, false, $folderId);
+    }
     public function updateDocumentFromHtml(string $id, string $title, string $html): array { return $this->export($id, $title, $html, true); }
 
     public function export(?string $id, string $title, string $html, bool $preserve = false, ?string $folderId = null): array
@@ -171,7 +228,7 @@ class GoogleDocsWriteService
         $public = $this->ensurePublicEditableAccess($id, (string) $token["access_token"]);
         if (!($public["success"] ?? false)) { if (!$preserve) $this->deleteDocument($id, true); return ["success" => false, "message" => (string) ($public["message"] ?? "Failed to make the Google Doc publicly editable by link.")]; }
         if ($preserve && $previousId && $previousId !== $id) { $this->deleteDocument($previousId, true); }
-        return ["success" => true, "message" => $preserve ? "Google Doc updated successfully." : "Google Doc created successfully.", "document_id" => $id, "normalized_url" => "https://docs.google.com/document/d/" . $id . "/edit", "web_view_link" => (string) ($meta["file"]["web_view_link"] ?? ""), "owner_email" => (string) ($meta["file"]["owner_email"] ?? ""), "connected_email" => (string) ($token["connected_email"] ?? ""), "shared_with_requested_owner" => $shared, "public_editable" => true, "public_role" => (string) ($public["role"] ?? "writer"), "public_access" => "anyone_with_link", "master_folder_id" => (string) ($folder["id"] ?? ""), "master_folder_name" => (string) ($folder["name"] ?? ""), "master_folder_url" => (string) ($folder["web_view_link"] ?? ""), "formatting_verified" => true, "formatting" => $formatting, "file" => $meta["file"], "inserted_images" => (int) ($insertedImages["inserted_images"] ?? 0)];
+        return ["success" => true, "account_id" => $this->accountId(), "message" => $preserve ? "Google Doc updated successfully." : "Google Doc created successfully.", "document_id" => $id, "normalized_url" => "https://docs.google.com/document/d/" . $id . "/edit", "web_view_link" => (string) ($meta["file"]["web_view_link"] ?? ""), "owner_email" => (string) ($meta["file"]["owner_email"] ?? ""), "connected_email" => (string) ($token["connected_email"] ?? ""), "shared_with_requested_owner" => $shared, "public_editable" => true, "public_role" => (string) ($public["role"] ?? "writer"), "public_access" => "anyone_with_link", "master_folder_id" => (string) ($folder["id"] ?? ""), "master_folder_name" => (string) ($folder["name"] ?? ""), "master_folder_url" => (string) ($folder["web_view_link"] ?? ""), "formatting_verified" => true, "formatting" => $formatting, "file" => $meta["file"], "inserted_images" => (int) ($insertedImages["inserted_images"] ?? 0)];
     }
 
 
@@ -280,17 +337,17 @@ class GoogleDocsWriteService
     {
         if ($this->authMode() === 'public_read') return ['success' => false, 'message' => 'Google Docs write access is not configured. Open Settings > Google Docs, switch Write auth mode to OAuth user write or Service account write, and save real write credentials first.'];
         if ($this->authMode() === 'oauth_user') {
-            $id = trim((string) $this->credentials->get('google-docs','oauth_client_id')); $secret = trim((string) $this->credentials->get('google-docs','oauth_client_secret')); $refresh = trim((string) $this->credentials->get('google-docs','oauth_refresh_token'));
+            $id = trim((string) $this->credentials->get($this->credentialSlug(),'oauth_client_id')); $secret = trim((string) $this->credentials->get($this->credentialSlug(),'oauth_client_secret')); $refresh = trim((string) $this->credentials->get($this->credentialSlug(),'oauth_refresh_token'));
             if ('' === $id || '' === $secret || '' === $refresh) return ['success' => false, 'message' => 'Google Docs OAuth client ID, client secret, or refresh token is missing.'];
-            $key = 'gdocs_oauth_' . md5($id . '|' . $refresh); if ($cached = Cache::get($key)) return ['success' => true, 'auth_mode' => 'oauth_user', 'access_token' => $cached, 'connected_email' => trim((string) Setting::getValue('google_docs_connected_email', '')) ?: null];
+            $key = 'gdocs_oauth_' . hash('sha256', $this->credentialSlug() . '|' . $id . '|' . $secret . '|' . $refresh); if ($cached = Cache::get($key)) return ['success' => true, 'auth_mode' => 'oauth_user', 'access_token' => $cached, 'connected_email' => trim((string) $this->accountSetting('connected_email')) ?: null];
             $res = $this->req('POST', self::TOKEN_URL, ['Content-Type: application/x-www-form-urlencoded'], http_build_query(['client_id'=>$id,'client_secret'=>$secret,'refresh_token'=>$refresh,'grant_type'=>'refresh_token']));
             if (!($res['success'] ?? false) || empty($res['data']['access_token'])) return ['success' => false, 'message' => 'Failed to refresh the Google Docs OAuth token: ' . ($res['error'] ?? 'Unknown error')];
             $token = (string) $res['data']['access_token']; Cache::put($key, $token, max(60, ((int) ($res['data']['expires_in'] ?? 3600)) - 120));
-            return ['success' => true, 'auth_mode' => 'oauth_user', 'access_token' => $token, 'connected_email' => trim((string) Setting::getValue('google_docs_connected_email', '')) ?: null];
+            return ['success' => true, 'auth_mode' => 'oauth_user', 'access_token' => $token, 'connected_email' => trim((string) $this->accountSetting('connected_email')) ?: null];
         }
         $json = $this->serviceAccountJson(); if ('' === $json) return ['success' => false, 'message' => 'Google Docs service-account JSON is missing.'];
         $sa = json_decode($json, true); if (!is_array($sa) || empty($sa['client_email']) || empty($sa['private_key'])) return ['success' => false, 'message' => 'Stored Google Docs service-account JSON is invalid.'];
-        $key = 'gdocs_sa_' . md5((string) $sa['client_email']); if ($cached = Cache::get($key)) return ['success' => true, 'auth_mode' => 'service_account', 'access_token' => $cached, 'connected_email' => (string) $sa['client_email']];
+        $key = 'gdocs_sa_' . hash('sha256', $this->credentialSlug() . '|' . $json); if ($cached = Cache::get($key)) return ['success' => true, 'auth_mode' => 'service_account', 'access_token' => $cached, 'connected_email' => (string) $sa['client_email']];
         $now = time(); $header = $this->b64(json_encode(['alg'=>'RS256','typ'=>'JWT'])); $claims = $this->b64(json_encode(['iss'=>$sa['client_email'],'scope'=>'https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/documents.readonly https://www.googleapis.com/auth/documents','aud'=>self::TOKEN_URL,'iat'=>$now,'exp'=>$now+3600]));
         $pk = openssl_pkey_get_private($sa['private_key']); if (!$pk) return ['success' => false, 'message' => 'Unable to load the Google Docs service-account private key.']; $sig=''; if (!openssl_sign($header . '.' . $claims, $sig, $pk, OPENSSL_ALGO_SHA256)) return ['success' => false, 'message' => 'Failed to sign the Google Docs service-account JWT assertion.'];
         $res = $this->req('POST', self::TOKEN_URL, ['Content-Type: application/x-www-form-urlencoded'], http_build_query(['grant_type'=>self::JWT_GRANT_TYPE,'assertion'=>$header . '.' . $claims . '.' . $this->b64($sig)]));
@@ -567,9 +624,9 @@ class GoogleDocsWriteService
 
     protected function serviceAccountJson(): string
     {
-        $json = trim((string) $this->credentials->get('google-docs', 'service_account_json'));
+        $json = trim((string) $this->credentials->get($this->credentialSlug(), 'service_account_json'));
         if ($json !== '') return $json;
-        return trim((string) $this->credentials->get('google-drive', 'service_account_json'));
+        return $this->accountId() === 'legacy' ? trim((string) $this->credentials->get('google-drive', 'service_account_json')) : '';
     }
 
     protected function ensureOwnerAccess(string $id, string $token, string $ownerEmail, string $connectedEmail): bool

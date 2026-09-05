@@ -10,11 +10,37 @@
         <p class="mt-1">Read mode imports public Google Docs without OAuth. Write mode creates and updates Google Docs through Google Drive + Google Docs APIs so the same package can be reused across Publish and other Hexa apps.</p>
     </div>
 
+    <section class="rounded-xl border border-gray-200 bg-white p-6 shadow-sm space-y-4">
+        <h2 class="text-lg font-semibold text-gray-900">Google accounts</h2>
+        <p class="text-sm text-gray-500">Choose an account to manage its credentials, write mode, sharing email, and Drive folder. New documents use the default account unless a caller selects another account.</p>
+        <div class="flex flex-wrap items-end gap-3">
+            <label class="block grow">
+                <span class="text-sm font-medium text-gray-700">Account to manage</span>
+                <select x-model="accountId" @change="selectAccount" class="mt-1 w-full rounded-lg border-gray-300">
+                    <template x-for="account in accounts" :key="account.id">
+                        <option :value="account.id" x-text="account.label + (account.id === defaultAccountId ? ' (default)' : '')"></option>
+                    </template>
+                </select>
+            </label>
+            <button type="button" @click="makeDefault" :disabled="savingAccount || accountId === defaultAccountId" class="rounded-lg bg-sky-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-50">Make default</button>
+        </div>
+        <p class="text-sm text-gray-600" x-show="accountId === defaultAccountId">This is the default account for new documents.</p>
+        <form @submit.prevent="addAccount" class="flex flex-wrap items-end gap-3">
+            <label class="block grow">
+                <span class="text-sm font-medium text-gray-700">Add Google account</span>
+                <input type="email" required x-model="newAccountEmail" placeholder="mediaagency.peres@gmail.com" class="mt-1 w-full rounded-lg border-gray-300">
+            </label>
+            <button type="submit" :disabled="savingAccount" class="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium disabled:opacity-50">Add account</button>
+        </form>
+        <p class="text-xs text-gray-500">Adding an email creates a profile. Authorize that account using the OAuth instructions below, save its credentials, then verify its identity before making it the default.</p>
+        <p x-show="accountResult?.message" x-cloak :class="accountResult?.success ? 'text-green-700' : 'text-red-700'" class="text-sm" x-text="accountResult?.message || ''"></p>
+    </section>
+
     <div class="grid gap-6 lg:grid-cols-[minmax(0,1.25fr)_minmax(0,0.9fr)]">
         <section class="rounded-xl border border-gray-200 bg-white p-6 shadow-sm space-y-5">
             <div>
                 <h2 class="text-lg font-semibold text-gray-900">General settings</h2>
-                <p class="mt-1 text-sm text-gray-500">These defaults control public-read behavior, write mode, target owner email, and the default Drive folder for exported documents.</p>
+                <p class="mt-1 text-sm text-gray-500">Read defaults apply globally. Write mode, sharing email, and Drive folder apply only to the selected account.</p>
             </div>
             <div class="grid gap-4 md:grid-cols-2">
                 <label class="block">
@@ -123,7 +149,7 @@
             <p class="mt-1 text-sm text-gray-500">Use this when docs should be created directly under the authenticated Google mailbox.</p>
         </div>
         <div class="rounded-xl border border-blue-200 bg-blue-50 p-4 text-sm text-blue-900 space-y-3">
-            <p class="font-semibold">Exact setup for <span class="font-mono">contact@michaelperes.com</span></p>
+            <p class="font-semibold">OAuth setup for the selected account</p>
             <ol class="list-decimal space-y-3 pl-5 text-blue-800">
                 <li>Open <a href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noopener" class="font-medium text-blue-700 underline hover:text-blue-900">Google Cloud Console → Credentials</a> and make sure you are in the <strong>same project</strong> as the OAuth client used on this page.</li>
                 <li>If Google shows the consent warning, open <a href="https://console.cloud.google.com/apis/credentials/consent" target="_blank" rel="noopener" class="font-medium text-blue-700 underline hover:text-blue-900">OAuth consent screen</a>, fill the app name, support email, and developer contact email, choose <strong>External</strong>, save, and come back to Credentials.</li>
@@ -131,7 +157,7 @@
                 <li>From Credentials, open or create the OAuth client. It must be a <strong>Web application</strong>. On the client page, under <strong>Authorized redirect URIs</strong>, click <strong>Add URI</strong> and paste <code class="rounded bg-blue-100 px-1.5 py-0.5 text-xs">https://developers.google.com/oauthplayground</code>. <strong>Do not</strong> put that value under Authorized JavaScript origins.</li>
                 <li>Open <a href="https://developers.google.com/oauthplayground" target="_blank" rel="noopener" class="font-medium text-blue-700 underline hover:text-blue-900">OAuth Playground</a>, click the gear icon, check <strong>Use your own OAuth credentials</strong>, paste the OAuth client ID and client secret from Google Cloud, then click <strong>Close</strong>.</li>
                 <li>In OAuth Playground Step 1, use the single scopes input and paste one exact scope pair into the <strong>same box</strong>, separated by a space. For folders created through this app, use <code class="rounded bg-blue-100 px-1.5 py-0.5 text-xs break-all">https://www.googleapis.com/auth/documents https://www.googleapis.com/auth/drive.file</code>. To write into an arbitrary pre-existing or shared folder, use <code class="rounded bg-blue-100 px-1.5 py-0.5 text-xs break-all">https://www.googleapis.com/auth/documents https://www.googleapis.com/auth/drive</code>.</li>
-                <li>Click <strong>Authorize APIs</strong>, sign in as <span class="font-mono">contact@michaelperes.com</span>, and allow access. If you see <span class="font-mono">redirect_uri_mismatch</span>, go back to the OAuth client and fix the Authorized redirect URI step above.</li>
+                <li>Click <strong>Authorize APIs</strong>, sign in as <strong>the selected Google account</strong>, and allow access. If you see <span class="font-mono">redirect_uri_mismatch</span>, go back to the OAuth client and fix the Authorized redirect URI step above.</li>
                 <li>In OAuth Playground Step 2, click <strong>Exchange authorization code for tokens</strong>. Copy the <strong>refresh token only</strong> from the response and save it into the <strong>Google OAuth refresh token</strong> field below.</li>
                 <li>After the three OAuth credential fields below are saved through HexaCore Credentials, go back to the top card and click <strong>Verify write identity</strong>. Then run <strong>Smoke test create/update/delete</strong>.</li>
                 <li>When write verification passes, click <strong>Create export folder</strong> to create <span class="font-mono">scalemypublication.com, publish exports</span> and save that folder ID as the default export folder.</li>
@@ -149,23 +175,23 @@
         <div class="grid gap-4 md:grid-cols-2">
             <div class="md:col-span-2">
                 <x-hexa-credential-field
-                    slug="google-docs"
+                    :slug="$credentialSlug"
                     key-name="oauth_client_id"
                     label="Google OAuth client ID"
                     help="Create this in Google Cloud Console under APIs & Services → Credentials. Save it here, then save the client secret and refresh token below."
                 />
             </div>
             <x-hexa-credential-field
-                slug="google-docs"
+                :slug="$credentialSlug"
                 key-name="oauth_client_secret"
                 label="Google OAuth client secret"
                 help="Use the client secret from the same OAuth client as the client ID above."
             />
             <x-hexa-credential-field
-                slug="google-docs"
+                :slug="$credentialSlug"
                 key-name="oauth_refresh_token"
                 label="Google OAuth refresh token"
-                help="Generate this in OAuth Playground while signed in as contact@michaelperes.com using the Docs and Drive scopes listed above."
+                help="Generate this in OAuth Playground while signed in as the selected Google account using the Docs and Drive scopes listed above."
             />
         </div>
     </section>
@@ -180,7 +206,7 @@
             <p>Create or manage service accounts in <a href="https://console.cloud.google.com/iam-admin/serviceaccounts" target="_blank" rel="noopener" class="font-medium text-blue-700 underline hover:text-blue-900">Google Cloud Console → Service Accounts</a>. If you use this mode, save the full JSON key below through the shared HexaCore credential field, then click <strong>Verify write identity</strong> in the connection card above.</p>
         </div>
         <x-hexa-credential-field
-            slug="google-docs"
+            :slug="$credentialSlug"
             key-name="service_account_json"
             label="Google service-account JSON"
             help="Paste the full JSON key as a single value. This is stored through HexaCore CredentialService and used only when Write auth mode is set to Service account write."
