@@ -280,6 +280,106 @@ class GoogleDocsWriteService
         ];
     }
 
+
+    /**
+     * Read native document structure with the selected account's Docs scope.
+     * Drive export access is not a prerequisite for native Docs operations.
+     */
+    public function getNativeDocument(string $value): array
+    {
+        $id = $this->id($value);
+        if (!$id) return ['success' => false, 'message' => 'Missing Google Doc ID.'];
+        $token = $this->token();
+        if (!($token['success'] ?? false)) return $token;
+
+        $res = $this->req(
+            'GET',
+            self::DOCS_API_BASE . '/' . urlencode($id) . '?includeTabsContent=true',
+            $this->auth((string) $token['access_token'])
+        );
+        if (!($res['success'] ?? false)) {
+            return [
+                'success' => false,
+                'message' => $res['error'] ?? 'Failed to read the native Google Doc.',
+                'document_id' => $id,
+                'status' => $res['status'] ?? null,
+            ];
+        }
+        if (($res['data']['documentId'] ?? null) !== $id) {
+            return ['success' => false, 'message' => 'Google returned an unexpected document ID.', 'document_id' => $id];
+        }
+
+        return [
+            'success' => true,
+            'document_id' => $id,
+            'normalized_url' => 'https://docs.google.com/document/d/' . $id . '/edit',
+            'account_id' => $this->accountId(),
+            'connected_email' => (string) ($token['connected_email'] ?? ''),
+            'document' => $res['data'],
+        ];
+    }
+
+    /**
+     * Apply native Docs requests in place. No replacement, sharing, or Drive
+     * metadata operation is performed. Use the revision from getNativeDocument
+     * to reject concurrent changes rather than applying stale content indexes.
+     */
+    public function batchUpdateNativeDocument(string $value, array $requests, string $requiredRevisionId): array
+    {
+        $id = $this->id($value);
+        if (!$id) return ['success' => false, 'message' => 'Missing Google Doc ID.'];
+        if (trim($requiredRevisionId) === '') {
+            return ['success' => false, 'message' => 'A current native document revision ID is required.'];
+        }
+        if ($requests === [] || !array_is_list($requests)) {
+            return ['success' => false, 'message' => 'Provide a non-empty list of native Google Docs requests.'];
+        }
+        foreach ($requests as $request) {
+            if (!is_array($request) || count($request) !== 1 || !is_string(array_key_first($request))
+                || !is_array(reset($request))) {
+                return ['success' => false, 'message' => 'Each native request must contain exactly one operation object.'];
+            }
+        }
+        try {
+            $body = json_encode([
+                'requests' => $requests,
+                'writeControl' => ['requiredRevisionId' => $requiredRevisionId],
+            ], JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR);
+        } catch (\JsonException $exception) {
+            return ['success' => false, 'message' => 'Native requests could not be encoded as JSON.'];
+        }
+
+        $token = $this->token();
+        if (!($token['success'] ?? false)) return $token;
+        $res = $this->req(
+            'POST',
+            self::DOCS_API_BASE . '/' . urlencode($id) . ':batchUpdate',
+            array_merge($this->auth((string) $token['access_token']), ['Content-Type: application/json']),
+            $body
+        );
+        if (!($res['success'] ?? false)) {
+            return [
+                'success' => false,
+                'message' => $res['error'] ?? 'Native Google Doc update failed.',
+                'document_id' => $id,
+                'status' => $res['status'] ?? null,
+            ];
+        }
+        if (($res['data']['documentId'] ?? null) !== $id) {
+            return ['success' => false, 'message' => 'Google returned an unexpected update document ID.', 'document_id' => $id];
+        }
+
+        return [
+            'success' => true,
+            'message' => 'Native Google Doc updated in place.',
+            'document_id' => $id,
+            'normalized_url' => 'https://docs.google.com/document/d/' . $id . '/edit',
+            'account_id' => $this->accountId(),
+            'connected_email' => (string) ($token['connected_email'] ?? ''),
+            'replies' => $res['data']['replies'] ?? [],
+            'write_control' => $res['data']['writeControl'] ?? [],
+        ];
+    }
     public function deleteDocument(string $value, bool $quiet = false): array
     {
         $id = $this->id($value); if (!$id) return ['success' => false, 'message' => 'Missing Google Doc ID.'];
