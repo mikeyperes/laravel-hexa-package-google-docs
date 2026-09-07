@@ -23,7 +23,8 @@ class GoogleDocsServiceProvider extends ServiceProvider
 
         $this->app->singleton(GoogleDocsWriteService::class, function ($app) {
             return new GoogleDocsWriteService(
-                $app->make(\hexa_core\Services\CredentialService::class)
+                $app->make(\hexa_core\Services\CredentialService::class),
+                http: $app->make(\hexa_core\Security\Http\SafeOutboundHttpClient::class),
             );
         });
 

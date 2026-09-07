@@ -4,6 +4,7 @@ namespace hexa_package_google_docs\Services;
 
 use hexa_core\Models\Setting;
 use hexa_core\Security\Http\OutboundHttpException;
+use hexa_core\Security\Http\OutboundHttpResponse;
 use hexa_core\Security\Http\SafeOutboundHttpClient;
 use hexa_core\Services\CredentialService;
 use Illuminate\Support\Facades\Cache;
@@ -14,15 +15,32 @@ class GoogleDocsWriteService
     private const JWT_GRANT_TYPE = 'urn:ietf:params:oauth:grant-type:jwt-bearer';
     private const DRIVE_API_BASE = 'https://www.googleapis.com/drive/v3';
     private const DOCS_API_BASE = 'https://docs.googleapis.com/v1/documents';
+    private const GOOGLE_ORIGINS = [
+        'https://docs.googleapis.com',
+        'https://oauth2.googleapis.com',
+        'https://www.googleapis.com',
+    ];
+    private const API_TIMEOUT_SECONDS = 20;
+    private const API_RESPONSE_BYTES = 8 * 1024 * 1024;
+    private const RAW_RESPONSE_BYTES = 12 * 1024 * 1024;
+    private const HTML_IMPORT_BYTES = 16 * 1024 * 1024;
+    private const UPLOAD_CHUNK_BYTES = 1024 * 1024;
+    private const UPLOAD_DEADLINE_SECONDS = 60;
+    private const IMAGE_COUNT = 12;
+    private const IMAGE_BYTES = 4 * 1024 * 1024;
+    private const IMAGE_AGGREGATE_BYTES = 16 * 1024 * 1024;
+    private const IMAGE_PIXELS = 25_000_000;
+    private const IMAGE_DEADLINE_SECONDS = 30;
+    private const IMAGE_REDIRECTS = 3;
+    private const IMAGE_MIME_TYPES = ['image/gif', 'image/jpeg', 'image/png', 'image/webp'];
 
     protected GoogleDocumentFormattingService $documentFormatting;
 
     public function __construct(
         protected CredentialService $credentials,
         ?GoogleDocumentFormattingService $documentFormatting = null,
-        private readonly ?SafeOutboundHttpClient $imageHttp = null,
-    )
-    {
+        protected ?SafeOutboundHttpClient $http = null,
+    ) {
         $this->documentFormatting = $documentFormatting ?? new GoogleDocumentFormattingService();
     }
 
@@ -218,6 +236,12 @@ class GoogleDocsWriteService
         if (trim(strip_tags($html)) === "") return ["success" => false, "message" => "Google Doc export requires non-empty article content."];
         $previousId = $id ? $this->id($id) : null;
         $imagePayload = $this->prepareInlineImageMarkers($html);
+        if (!($imagePayload['success'] ?? false)) {
+            return [
+                'success' => false,
+                'message' => (string) ($imagePayload['message'] ?? 'A remote image could not be safely prepared for Google Docs.'),
+            ];
+        }
         $htmlForImport = (string) ($imagePayload["html"] ?? $html);
         $imageMarkers = is_array($imagePayload["images"] ?? null) ? $imagePayload["images"] : [];
         $import = $this->importHtmlDocument((trim($title) ?: "Untitled Document"), $htmlForImport, (string) $token["access_token"], $folderId);
@@ -475,74 +499,183 @@ class GoogleDocsWriteService
 
     protected function importHtmlDocument(string $title, string $html, string $token, ?string $folderId = null): array
     {
-        $html = $this->embedRemoteImagesForImport($html);
-        $boundary = 'hexa-google-docs-' . md5($title . '|' . microtime(true));
+        $htmlBytes = strlen($html);
+        if ($htmlBytes === 0 || $htmlBytes > self::HTML_IMPORT_BYTES) {
+            return ['success' => false, 'message' => 'Google Doc HTML import exceeded the safe size limit.'];
+        }
+
         $metadata = ['name' => $title, 'mimeType' => 'application/vnd.google-apps.document'];
         $folderId = trim((string) $folderId) ?: $this->defaultFolderId();
         if ($folderId !== '') {
             $metadata['parents'] = [$folderId];
         }
 
-        $body = '--' . $boundary . "
-";
-        $body .= "Content-Type: application/json; charset=UTF-8
-
-";
-        $body .= json_encode($metadata, JSON_UNESCAPED_SLASHES) . "
-";
-        $body .= '--' . $boundary . "
-";
-        $body .= "Content-Type: text/html; charset=UTF-8
-
-";
-        $body .= $html . "
-";
-        $body .= '--' . $boundary . "--
-";
-
-        $res = $this->req('POST', 'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id', array_merge($this->auth((string) $token), ['Content-Type: multipart/related; boundary=' . $boundary]), $body);
-        if (!($res['success'] ?? false) || empty($res['data']['id'])) {
-            return ['success' => false, 'message' => $res['error'] ?? 'Failed to create the Google Doc from HTML.'];
+        try {
+            $metadataBody = json_encode($metadata, JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR);
+        } catch (\JsonException) {
+            return ['success' => false, 'message' => 'Google Doc import metadata could not be encoded.'];
         }
 
-        return ['success' => true, 'document_id' => (string) $res['data']['id']];
+        $deadline = $this->monotonicTime() + self::UPLOAD_DEADLINE_SECONDS;
+        $init = $this->googleRequest(
+            'POST',
+            'https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable&fields=id',
+            array_merge($this->auth($token), [
+                'Content-Type: application/json; charset=UTF-8',
+                'X-Upload-Content-Type: text/html; charset=UTF-8',
+                'X-Upload-Content-Length: '.$htmlBytes,
+            ]),
+            $metadataBody,
+            $this->deadlineTimeout($deadline),
+            64 * 1024,
+        );
+        if (!($init['success'] ?? false)) {
+            return ['success' => false, 'message' => $init['error'] ?? 'Failed to start the Google Doc HTML import.'];
+        }
+        if ($this->monotonicTime() >= $deadline) {
+            return ['success' => false, 'message' => 'Google Doc HTML upload exceeded its total deadline.'];
+        }
+
+        /** @var OutboundHttpResponse $initResponse */
+        $initResponse = $init['response'];
+        if (!$initResponse->successful()) {
+            return ['success' => false, 'message' => $this->googleHttpError($initResponse)];
+        }
+        $locations = $initResponse->headerValues('location');
+        $sessionUrl = count($locations) === 1 ? trim($locations[0]) : '';
+        if ($sessionUrl === '' || !$this->isApprovedGoogleUrl($sessionUrl)) {
+            return ['success' => false, 'message' => 'Google Drive returned an invalid resumable upload destination.'];
+        }
+
+        $offset = 0;
+        while ($offset < $htmlBytes) {
+            $length = min(self::UPLOAD_CHUNK_BYTES, $htmlBytes - $offset);
+            $end = $offset + $length - 1;
+            $upload = $this->googleRequest(
+                'PUT',
+                $sessionUrl,
+                array_merge($this->auth($token), [
+                    'Content-Type: text/html; charset=UTF-8',
+                    'Content-Range: bytes '.$offset.'-'.$end.'/'.$htmlBytes,
+                ]),
+                substr($html, $offset, $length),
+                $this->deadlineTimeout($deadline),
+                1024 * 1024,
+            );
+            if (!($upload['success'] ?? false)) {
+                return ['success' => false, 'message' => $upload['error'] ?? 'Google Doc HTML upload failed.'];
+            }
+            if ($this->monotonicTime() >= $deadline) {
+                return ['success' => false, 'message' => 'Google Doc HTML upload exceeded its total deadline.'];
+            }
+
+            /** @var OutboundHttpResponse $uploadResponse */
+            $uploadResponse = $upload['response'];
+            $offset = $end + 1;
+
+            if ($offset < $htmlBytes) {
+                if ($uploadResponse->status !== 308 || !$this->acceptedUploadRange($uploadResponse, $end)) {
+                    return ['success' => false, 'message' => 'Google Drive returned an invalid resumable upload checkpoint.'];
+                }
+                continue;
+            }
+
+            if (!$uploadResponse->successful()) {
+                return ['success' => false, 'message' => $this->googleHttpError($uploadResponse)];
+            }
+
+            try {
+                $data = json_decode($uploadResponse->body, true, flags: JSON_THROW_ON_ERROR);
+            } catch (\JsonException) {
+                return ['success' => false, 'message' => 'Google Drive returned an invalid HTML import response.'];
+            }
+
+            $documentId = is_array($data) ? trim((string) ($data['id'] ?? '')) : '';
+            if ($documentId === '') {
+                return ['success' => false, 'message' => 'Google Doc import did not return a document ID.'];
+            }
+
+            return ['success' => true, 'document_id' => $documentId];
+        }
+
+        return ['success' => false, 'message' => 'Google Doc HTML upload did not complete.'];
     }
 
     /**
      * Google Drive HTML import can drop image tags. Preserve image placement
      * with markers, then replace the markers through the Google Docs API.
      *
-     * @return array{html:string,images:array<int,array{marker:string,url:string,alt:string}>}
+     * @return array{success:bool,html?:string,images?:array<int,array{marker:string,url:string,alt:string}>,message?:string}
      */
     protected function prepareInlineImageMarkers(string $html): array
     {
         if ($html === "" || stripos($html, "<img") === false) {
-            return ["html" => $html, "images" => []];
+            return ["success" => true, "html" => $html, "images" => []];
+        }
+
+        if ($this->remoteImageCount($html) > self::IMAGE_COUNT) {
+            return [
+                'success' => false,
+                'message' => 'Google Doc export supports at most '.self::IMAGE_COUNT.' remote images.',
+            ];
         }
 
         $images = [];
         $index = 0;
-        $updated = preg_replace_callback("/<img\\b([^>]*)>/iu", function (array $matches) use (&$images, &$index): string {
+        $aggregateBytes = 0;
+        $deadline = $this->monotonicTime() + self::IMAGE_DEADLINE_SECONDS;
+        $failure = null;
+        $updated = preg_replace_callback("/<img\\b([^>]*)>/iu", function (array $matches) use (&$images, &$index, &$aggregateBytes, $deadline, &$failure): string {
+            if ($failure !== null) {
+                return '';
+            }
+
             $attributes = (string) ($matches[1] ?? "");
-            if (!preg_match("/\\bsrc=([\"\\x27])(.*?)\\1/iu", $attributes, $srcMatch)) {
-                return (string) ($matches[0] ?? "");
+            $source = $this->imageSourceFromAttributes($attributes);
+            if ($source === null) {
+                return '';
             }
 
-            $url = html_entity_decode(trim((string) ($srcMatch[2] ?? "")), ENT_QUOTES | ENT_HTML5, "UTF-8");
+            $url = html_entity_decode(trim($source), ENT_QUOTES | ENT_HTML5, "UTF-8");
+            if (str_starts_with(strtolower($url), 'data:image/')) {
+                return (string) ($matches[0] ?? '');
+            }
             if (!preg_match("#^https?://#i", $url)) {
-                return (string) ($matches[0] ?? "");
+                return '';
             }
 
+            $image = $this->fetchRemoteImage($url, $deadline);
+            if (!($image['success'] ?? false)) {
+                if ($image['omit'] ?? false) {
+                    return '';
+                }
+                $failure = (string) ($image['message'] ?? 'A remote image could not be safely validated.');
+                return '';
+            }
+            $aggregateBytes += (int) ($image['bytes'] ?? 0);
+            if ($aggregateBytes > self::IMAGE_AGGREGATE_BYTES) {
+                $failure = 'Remote images exceeded the safe aggregate size limit.';
+                return '';
+            }
+
+            $validatedUrl = (string) ($image['url'] ?? '');
             preg_match("/\\balt=([\"\\x27])(.*?)\\1/iu", $attributes, $altMatch);
             $alt = html_entity_decode(trim((string) ($altMatch[2] ?? "")), ENT_QUOTES | ENT_HTML5, "UTF-8");
-            $marker = "HEXA_GOOGLE_DOC_IMAGE_" . $index . "_" . substr(sha1($url . "|" . $index), 0, 10);
-            $images[] = ["marker" => $marker, "url" => $url, "alt" => $alt];
+            $marker = "HEXA_GOOGLE_DOC_IMAGE_" . $index . "_" . substr(sha1($validatedUrl . "|" . $index), 0, 10);
+            $images[] = ["marker" => $marker, "url" => $validatedUrl, "alt" => $alt];
             $index++;
 
             return "<span>" . $marker . "</span>";
         }, $html);
 
-        return ["html" => $updated ?? $html, "images" => $images];
+        if ($failure !== null || $updated === null) {
+            return [
+                'success' => false,
+                'message' => $failure ?? 'Remote images could not be safely prepared for Google Docs.',
+            ];
+        }
+
+        return ["success" => true, "html" => $updated, "images" => $images];
     }
 
     protected function insertMarkedImages(string $id, array $images, string $token): array
@@ -788,85 +921,99 @@ class GoogleDocsWriteService
     }
 
 
-    protected function embedRemoteImagesForImport(string $html): string
+    /** @return array{success:bool,url?:string,bytes?:int,message?:string,omit?:bool} */
+    protected function fetchRemoteImage(string $url, float $deadline): array
     {
-        if ($html === "" || stripos($html, "<img") === false) {
-            return $html;
+        $timeout = $this->deadlineTimeout($deadline);
+        if ($timeout === 0) {
+            return ['success' => false, 'message' => 'Remote image validation exceeded its total deadline.'];
         }
 
-        return preg_replace_callback("/<img\\b([^>]*)>/iu", function (array $matches): string {
-            $tag = $matches[0] ?? "";
-            $attributes = $matches[1] ?? "";
-            if ($tag === "" || !preg_match("/\\bsrc=([\"\\x27])(.*?)\\1/iu", $attributes, $srcMatch)) {
-                return $tag;
-            }
-
-            $src = html_entity_decode(trim((string) ($srcMatch[2] ?? "")), ENT_QUOTES | ENT_HTML5, "UTF-8");
-            $dataUri = $this->remoteImageDataUri($src);
-            if ($dataUri === null) {
-                return $tag;
-            }
-
-            $replacement = "src=\"" . htmlspecialchars($dataUri, ENT_QUOTES | ENT_SUBSTITUTE, "UTF-8") . "\"";
-            $updatedAttributes = preg_replace("/\\bsrc=([\"\\x27])(.*?)\\1/iu", $replacement, $attributes, 1) ?? $attributes;
-
-            return "<img" . $updatedAttributes . ">";
-        }, $html) ?? $html;
-    }
-
-    protected function remoteImageDataUri(string $url): ?string
-    {
-        if ($url === "" || str_starts_with($url, "data:image/")) {
-            return $url !== "" ? $url : null;
-        }
-        if (!preg_match("#^https?://#i", $url)) {
-            return null;
-        }
-
-        $image = $this->fetchRemoteImage($url);
-        if ($image === null) {
-            return null;
-        }
-
-        return "data:" . $image["mime"] . ";base64," . base64_encode($image["body"]);
-    }
-
-    /**
-     * @return array{mime:string,body:string}|null
-     */
-    protected function fetchRemoteImage(string $url): ?array
-    {
         try {
-            $response = ($this->imageHttp ?? app(SafeOutboundHttpClient::class))->request('GET', $url, [
+            $response = $this->httpClient()->request('GET', $url, [
                 'headers' => [
-                    'Accept' => 'image/jpeg,image/png,image/gif,image/webp',
-                    'User-Agent' => 'Hexa Google Docs Export/1.0',
+                    'Accept' => implode(',', self::IMAGE_MIME_TYPES),
+                    'User-Agent' => 'Hexa Google Docs Export/1.1',
                 ],
-                'timeout' => 20,
-                'max_bytes' => 8 * 1024 * 1024,
-                'max_redirects' => 5,
+                'timeout' => min(self::API_TIMEOUT_SECONDS, $timeout),
+                'max_bytes' => self::IMAGE_BYTES,
+                'max_redirects' => self::IMAGE_REDIRECTS,
             ]);
-        } catch (OutboundHttpException) {
+        } catch (OutboundHttpException $exception) {
+            return [
+                'success' => false,
+                'message' => $exception->failureCode() === 'response_too_large'
+                    ? 'A remote image exceeded the safe per-image size limit.'
+                    : 'A remote image could not be safely validated.',
+                'omit' => $exception->failureCode() !== 'response_too_large',
+            ];
+        }
+
+        if ($this->monotonicTime() >= $deadline) {
+            return ['success' => false, 'message' => 'Remote image validation exceeded its total deadline.'];
+        }
+        if (!$response->successful() || $response->body === '') {
+            return ['success' => false, 'message' => 'A remote image could not be safely validated.'];
+        }
+
+        $contentTypes = $response->headerValues('content-type');
+        if (count($contentTypes) !== 1) {
+            return ['success' => false, 'message' => 'A remote image returned an invalid media type.'];
+        }
+        $declaredMime = strtolower(trim(explode(';', $contentTypes[0], 2)[0]));
+        $imageInfo = @getimagesizefromstring($response->body);
+        $detectedMime = is_array($imageInfo) ? strtolower((string) ($imageInfo['mime'] ?? '')) : '';
+        $declaredMimeIsGeneric = $declaredMime === 'application/octet-stream';
+        if (
+            (!in_array($declaredMime, self::IMAGE_MIME_TYPES, true) && !$declaredMimeIsGeneric)
+            || !in_array($detectedMime, self::IMAGE_MIME_TYPES, true)
+            || (!$declaredMimeIsGeneric && $declaredMime !== $detectedMime)
+        ) {
+            return ['success' => false, 'message' => 'A remote image failed media-type validation.'];
+        }
+
+        $width = (int) ($imageInfo[0] ?? 0);
+        $height = (int) ($imageInfo[1] ?? 0);
+        if ($width < 1 || $height < 1 || $width > intdiv(self::IMAGE_PIXELS, $height)) {
+            return ['success' => false, 'message' => 'A remote image exceeded the safe pixel limit.'];
+        }
+
+        return [
+            'success' => true,
+            'url' => (string) ($response->effectiveUrl ?? $url),
+            'bytes' => strlen($response->body),
+        ];
+    }
+
+    protected function remoteImageCount(string $html): int
+    {
+        preg_match_all('/<img\\b([^>]*)>/iu', $html, $tags);
+        $count = 0;
+        foreach ((array) ($tags[1] ?? []) as $attributes) {
+            $source = $this->imageSourceFromAttributes((string) $attributes);
+            if ($source === null) {
+                continue;
+            }
+            $url = html_entity_decode(trim($source), ENT_QUOTES | ENT_HTML5, 'UTF-8');
+            if (preg_match('#^https?://#i', $url)) {
+                $count++;
+            }
+        }
+
+        return $count;
+    }
+
+    protected function imageSourceFromAttributes(string $attributes): ?string
+    {
+        if (preg_match(
+            '/(?:^|\\s)src\\s*=\\s*(?:(["\\x27])(.*?)\\1|([^\\s"\\x27=<>`]+))/iu',
+            $attributes,
+            $match,
+        ) !== 1) {
             return null;
         }
 
-        $body = $response->body;
-        if (! $response->successful() || $body === '') {
-            return null;
-        }
-        $mime = $response->headerValues('content-type')[0] ?? '';
-        $mime = strtolower(trim(explode(";", $mime)[0] ?? ""));
-        if ($mime === "" || !str_starts_with($mime, "image/")) {
-            $info = @getimagesizefromstring($body);
-            $mime = is_array($info) ? strtolower((string) ($info["mime"] ?? "")) : "";
-        }
-
-        $allowed = ["image/jpeg", "image/png", "image/gif", "image/webp"];
-        if (!in_array($mime, $allowed, true)) {
-            return null;
-        }
-
-        return ["mime" => $mime, "body" => $body];
+        return isset($match[3]) && $match[3] !== '' ? $match[3] : (string) ($match[2] ?? '');
     }
 
     protected function plain(string $html): string
@@ -886,11 +1033,171 @@ class GoogleDocsWriteService
 
     protected function req(string $method, string $url, array $headers = [], ?string $body = null, bool $raw = false): array
     {
-        $ch = curl_init(); curl_setopt_array($ch, [CURLOPT_URL => $url, CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => 60, CURLOPT_FOLLOWLOCATION => true, CURLOPT_MAXREDIRS => 5, CURLOPT_SSL_VERIFYPEER => true, CURLOPT_CUSTOMREQUEST => strtoupper($method), CURLOPT_HTTPHEADER => array_merge(['Accept: application/json'], $headers)]); if (null !== $body) curl_setopt($ch, CURLOPT_POSTFIELDS, $body);
-        $out = curl_exec($ch); $code = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE); $err = curl_error($ch);
-        if (false === $out) return ['success' => false, 'error' => $err ?: 'cURL request failed.', 'status' => $code];
-        if ($code < 200 || $code >= 300) { $msg = 'HTTP ' . $code; $json = json_decode($out, true); if (is_array($json)) $msg = $json['error']['message'] ?? $json['message'] ?? $msg; return ['success' => false, 'error' => $msg, 'status' => $code]; }
-        if ($raw) return ['success' => true, 'data' => $out, 'status' => $code];
-        $json = json_decode($out, true); if (JSON_ERROR_NONE !== json_last_error()) return ['success' => false, 'error' => 'Invalid JSON response from Google API.', 'status' => $code]; return ['success' => true, 'data' => $json, 'status' => $code];
+        $result = $this->googleRequest(
+            $method,
+            $url,
+            array_merge($raw ? [] : ['Accept: application/json'], $headers),
+            $body,
+            self::API_TIMEOUT_SECONDS,
+            $raw ? self::RAW_RESPONSE_BYTES : self::API_RESPONSE_BYTES,
+        );
+        if (!($result['success'] ?? false)) {
+            return $result;
+        }
+
+        /** @var OutboundHttpResponse $response */
+        $response = $result['response'];
+        if (!$response->successful()) {
+            return ['success' => false, 'error' => $this->googleHttpError($response), 'status' => $response->status];
+        }
+        if ($raw) {
+            return ['success' => true, 'data' => $response->body, 'status' => $response->status];
+        }
+
+        try {
+            $data = json_decode($response->body, true, flags: JSON_THROW_ON_ERROR);
+        } catch (\JsonException) {
+            return ['success' => false, 'error' => 'Invalid JSON response from Google API.', 'status' => $response->status];
+        }
+
+        return ['success' => true, 'data' => $data, 'status' => $response->status];
+    }
+
+    /** @return array{success:bool,response?:OutboundHttpResponse,error?:string,status?:int} */
+    protected function googleRequest(
+        string $method,
+        string $url,
+        array $headers,
+        ?string $body,
+        int $timeout,
+        int $maxBytes,
+    ): array {
+        if ($timeout < 1) {
+            return ['success' => false, 'error' => 'Google API request exceeded its total deadline.'];
+        }
+        if (!$this->isApprovedGoogleUrl($url)) {
+            return ['success' => false, 'error' => 'Google API destination was rejected.'];
+        }
+
+        $normalizedHeaders = $this->normalizeRequestHeaders($headers);
+        if ($normalizedHeaders === null) {
+            return ['success' => false, 'error' => 'Google API request headers were invalid.'];
+        }
+
+        try {
+            $response = $this->httpClient()->request($method, $url, [
+                'headers' => $normalizedHeaders,
+                'body' => $body,
+                'timeout' => min(self::API_TIMEOUT_SECONDS, $timeout),
+                'max_bytes' => $maxBytes,
+                'max_redirects' => 0,
+            ]);
+        } catch (OutboundHttpException $exception) {
+            $error = match ($exception->failureCode()) {
+                'request_body_too_large' => 'Google API request exceeded the safe size limit.',
+                'response_too_large', 'response_headers_too_large' => 'Google API response exceeded the safe size limit.',
+                'target_rejected', 'redirect_invalid', 'redirect_limit', 'redirect_cycle' => 'Google API destination was rejected.',
+                default => 'Google API request could not be completed.',
+            };
+
+            return ['success' => false, 'error' => $error];
+        }
+
+        return ['success' => true, 'response' => $response, 'status' => $response->status];
+    }
+
+    /** @return array<string,string>|null */
+    protected function normalizeRequestHeaders(array $headers): ?array
+    {
+        $normalized = [];
+        foreach ($headers as $name => $value) {
+            if (is_int($name)) {
+                if (!is_string($value) || !str_contains($value, ':')) {
+                    return null;
+                }
+                [$name, $value] = explode(':', $value, 2);
+            }
+            if (!is_string($name) || !is_scalar($value) || is_bool($value)) {
+                return null;
+            }
+            $name = trim($name);
+            $value = trim((string) $value);
+            $lower = strtolower($name);
+            if ($name === '' || $value === '' || isset($normalized[$lower])) {
+                return null;
+            }
+            $normalized[$lower] = [$name, $value];
+        }
+
+        return array_column(array_values($normalized), 1, 0);
+    }
+
+    protected function isApprovedGoogleUrl(string $url): bool
+    {
+        $parts = parse_url($url);
+        if (!is_array($parts) || strtolower((string) ($parts['scheme'] ?? '')) !== 'https') {
+            return false;
+        }
+        if (isset($parts['user']) || isset($parts['pass']) || (isset($parts['port']) && (int) $parts['port'] !== 443)) {
+            return false;
+        }
+
+        $origin = 'https://'.strtolower((string) ($parts['host'] ?? ''));
+
+        return in_array($origin, self::GOOGLE_ORIGINS, true);
+    }
+
+    protected function googleHttpError(OutboundHttpResponse $response): string
+    {
+        $body = json_decode($response->body, true);
+        $message = is_array($body)
+            ? mb_strtolower((string) ($body['error']['message'] ?? $body['message'] ?? ''))
+            : '';
+
+        if ($response->status === 401) {
+            return 'Google API authentication failed.';
+        }
+        if ($response->status === 403 && (
+            str_contains($message, 'insufficient authentication scope')
+            || str_contains($message, 'insufficient authentication scopes')
+            || str_contains($message, 'access_token_scope_insufficient')
+        )) {
+            return 'Google API request had insufficient authentication scope.';
+        }
+
+        return match (true) {
+            $response->status === 403 => 'Google API denied the request.',
+            $response->status === 404 => 'Google API resource was not found.',
+            $response->status === 409 => 'Google API reported a conflict.',
+            $response->status === 429 => 'Google API rate limit was reached.',
+            $response->status >= 500 => 'Google API is temporarily unavailable.',
+            default => 'Google API request failed with HTTP '.$response->status.'.',
+        };
+    }
+
+    protected function acceptedUploadRange(OutboundHttpResponse $response, int $expectedEnd): bool
+    {
+        $ranges = $response->headerValues('range');
+
+        return count($ranges) === 1
+            && preg_match('/^bytes=0-(\d+)$/D', trim($ranges[0]), $match) === 1
+            && (int) $match[1] === $expectedEnd;
+    }
+
+    protected function deadlineTimeout(float $deadline): int
+    {
+        $remaining = $deadline - $this->monotonicTime();
+
+        return $remaining > 0 ? (int) max(1, ceil($remaining)) : 0;
+    }
+
+    protected function monotonicTime(): float
+    {
+        return hrtime(true) / 1_000_000_000;
+    }
+
+    protected function httpClient(): SafeOutboundHttpClient
+    {
+        return $this->http ??= app(SafeOutboundHttpClient::class);
     }
 }
