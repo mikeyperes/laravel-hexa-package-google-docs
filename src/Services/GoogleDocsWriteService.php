@@ -3,6 +3,8 @@
 namespace hexa_package_google_docs\Services;
 
 use hexa_core\Models\Setting;
+use hexa_core\Security\Http\OutboundHttpException;
+use hexa_core\Security\Http\SafeOutboundHttpClient;
 use hexa_core\Services\CredentialService;
 use Illuminate\Support\Facades\Cache;
 
@@ -15,7 +17,11 @@ class GoogleDocsWriteService
 
     protected GoogleDocumentFormattingService $documentFormatting;
 
-    public function __construct(protected CredentialService $credentials, ?GoogleDocumentFormattingService $documentFormatting = null)
+    public function __construct(
+        protected CredentialService $credentials,
+        ?GoogleDocumentFormattingService $documentFormatting = null,
+        private readonly ?SafeOutboundHttpClient $imageHttp = null,
+    )
     {
         $this->documentFormatting = $documentFormatting ?? new GoogleDocumentFormattingService();
     }
@@ -830,40 +836,25 @@ class GoogleDocsWriteService
      */
     protected function fetchRemoteImage(string $url): ?array
     {
-        $body = "";
-        $maxBytes = 8 * 1024 * 1024;
-        $ch = curl_init();
-        curl_setopt_array($ch, [
-            CURLOPT_URL => $url,
-            CURLOPT_RETURNTRANSFER => false,
-            CURLOPT_TIMEOUT => 20,
-            CURLOPT_CONNECTTIMEOUT => 8,
-            CURLOPT_FOLLOWLOCATION => true,
-            CURLOPT_MAXREDIRS => 5,
-            CURLOPT_SSL_VERIFYPEER => true,
-            CURLOPT_HTTPHEADER => [
-                "Accept: image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
-                "User-Agent: Hexa Google Docs Export/1.0",
-            ],
-            CURLOPT_WRITEFUNCTION => static function ($curl, string $chunk) use (&$body, $maxBytes): int {
-                if (strlen($body) + strlen($chunk) > $maxBytes) {
-                    return 0;
-                }
-                $body .= $chunk;
-                return strlen($chunk);
-            },
-        ]);
-
-        curl_exec($ch);
-        $code = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
-        $mime = trim((string) curl_getinfo($ch, CURLINFO_CONTENT_TYPE));
-        $error = curl_error($ch);
-        curl_close($ch);
-
-        if ($error !== "" || $code < 200 || $code >= 300 || $body === "") {
+        try {
+            $response = ($this->imageHttp ?? app(SafeOutboundHttpClient::class))->request('GET', $url, [
+                'headers' => [
+                    'Accept' => 'image/jpeg,image/png,image/gif,image/webp',
+                    'User-Agent' => 'Hexa Google Docs Export/1.0',
+                ],
+                'timeout' => 20,
+                'max_bytes' => 8 * 1024 * 1024,
+                'max_redirects' => 5,
+            ]);
+        } catch (OutboundHttpException) {
             return null;
         }
 
+        $body = $response->body;
+        if (! $response->successful() || $body === '') {
+            return null;
+        }
+        $mime = $response->headerValues('content-type')[0] ?? '';
         $mime = strtolower(trim(explode(";", $mime)[0] ?? ""));
         if ($mime === "" || !str_starts_with($mime, "image/")) {
             $info = @getimagesizefromstring($body);
