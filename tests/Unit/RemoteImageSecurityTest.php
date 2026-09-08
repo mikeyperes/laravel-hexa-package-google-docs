@@ -80,9 +80,11 @@ final class RemoteImageSecurityTest extends TestCase
             return new OutboundHttpResponse(302, ['Location' => 'http://169.254.169.254/image.png'], '');
         });
 
-        $result = $writer->prepare('<img src="https://images.example.net/image.png">');
+        $result = $writer->prepare('<p>Before</p><img src="https://images.example.net/image.png"><p>After</p>');
 
-        $this->assertFalse($result['success']);
+        $this->assertTrue($result['success']);
+        $this->assertSame('<p>Before</p><p>After</p>', $result['html']);
+        $this->assertSame([], $result['images']);
         $this->assertSame(1, $calls);
     }
 
@@ -115,9 +117,11 @@ final class RemoteImageSecurityTest extends TestCase
             return new OutboundHttpResponse(302, ['Location' => 'https://images.example.net/'.$calls.'.png'], '');
         });
 
-        $result = $writer->prepare('<img src="https://images.example.net/start.png">');
+        $result = $writer->prepare('<p>Before</p><img src="https://images.example.net/start.png"><p>After</p>');
 
-        $this->assertFalse($result['success']);
+        $this->assertTrue($result['success']);
+        $this->assertSame('<p>Before</p><p>After</p>', $result['html']);
+        $this->assertSame([], $result['images']);
         $this->assertSame(4, $calls);
     }
 

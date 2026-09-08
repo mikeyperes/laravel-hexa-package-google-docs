@@ -25,8 +25,9 @@ final class GoogleDocsWriteTransportSecurityTest extends TestCase
             '<p>Story</p><img src = http://169.254.169.254/private.png>',
         ] as $html) {
             $result = $service->prepareImages($html);
-            $this->assertFalse($result['success']);
-            $this->assertSame('A remote image could not be safely validated.', $result['message']);
+            $this->assertTrue($result['success']);
+            $this->assertSame('<p>Story</p>', $result['html']);
+            $this->assertSame([], $result['images']);
         }
         $this->assertSame([], $requests);
         $this->assertStringNotContainsString('169.254.169.254', json_encode($result, JSON_THROW_ON_ERROR));
@@ -44,9 +45,11 @@ final class GoogleDocsWriteTransportSecurityTest extends TestCase
             ),
         );
 
-        $result = $service->prepareImages('<img src="https://cdn.example.net/image.png">');
+        $result = $service->prepareImages('<p>Before</p><img src="https://cdn.example.net/image.png"><p>After</p>');
 
-        $this->assertFalse($result['success']);
+        $this->assertTrue($result['success']);
+        $this->assertSame('<p>Before</p><p>After</p>', $result['html']);
+        $this->assertSame([], $result['images']);
         $this->assertCount(1, $requests);
         $this->assertSame('cdn.example.net', $requests[0]->target->host);
         $this->assertStringNotContainsString('169.254.169.254', json_encode($result, JSON_THROW_ON_ERROR));
