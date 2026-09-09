@@ -410,6 +410,104 @@ class GoogleDocsWriteService
             'write_control' => $res['data']['writeControl'] ?? [],
         ];
     }
+    /**
+     * Insert local image bytes through this writer's selected Google account.
+     * Drive's private image-to-Doc import supplies a short-lived image URI.
+     * Only that image is inserted; the temporary import is deleted afterwards.
+     */
+    public function insertNativeImageFromFile(
+        string $value,
+        string $localPath,
+        array $location,
+        string $requiredRevisionId,
+        ?array $replaceRange = null,
+        ?float $heightPt = null,
+    ): array {
+        $id = $this->id($value);
+        $index = $location['index'] ?? null;
+        $tabId = $location['tabId'] ?? null;
+        if (!$id || trim($requiredRevisionId) === '' || !is_int($index) || $index < 1
+            || !is_string($tabId) || trim($tabId) === '') {
+            return ['success' => false, 'message' => 'An exact document, tab, index and current revision are required.'];
+        }
+        if ($replaceRange !== null && (($replaceRange['startIndex'] ?? null) !== $index
+            || ($replaceRange['tabId'] ?? null) !== $tabId
+            || !is_int($replaceRange['endIndex'] ?? null) || $replaceRange['endIndex'] <= $index)) {
+            return ['success' => false, 'message' => 'The replacement range must start at the image location in the same tab.'];
+        }
+        if ($heightPt !== null && (!is_finite($heightPt) || $heightPt <= 0)) {
+            return ['success' => false, 'message' => 'Image height must be a positive finite point value.'];
+        }
+        if (!is_file($localPath) || !is_readable($localPath)
+            || filesize($localPath) < 1 || filesize($localPath) > self::IMAGE_BYTES) {
+            return ['success' => false, 'message' => 'A readable image within the existing size limit is required.'];
+        }
+        $bytes = file_get_contents($localPath, false, null, 0, self::IMAGE_BYTES + 1);
+        $info = is_string($bytes) ? @getimagesizefromstring($bytes) : false;
+        $mime = is_array($info) ? ($info['mime'] ?? '') : '';
+        if (!is_string($bytes) || strlen($bytes) > self::IMAGE_BYTES
+            || !in_array($mime, ['image/png', 'image/jpeg', 'image/gif'], true)
+            || ($info[0] ?? 0) < 1 || ($info[1] ?? 0) < 1
+            || $info[0] > intdiv(self::IMAGE_PIXELS, $info[1])) {
+            return ['success' => false, 'message' => 'Use a PNG, JPEG or GIF within the existing image pixel and byte limits.'];
+        }
+
+        $token = $this->token();
+        if (!($token['success'] ?? false)) return $token;
+        $import = $this->importMediaDocument('Temporary image import', $bytes, $mime, (string) $token['access_token']);
+        if (!($import['success'] ?? false)) return $import;
+        $temporaryId = (string) $import['document_id'];
+        $result = ['success' => false, 'image_inserted' => false, 'message' => 'The imported image was not available.'];
+
+        try {
+            $privacy = $this->req(
+                'GET',
+                self::DRIVE_API_BASE . '/files/' . urlencode($temporaryId) . '?fields=id,shared',
+                $this->auth((string) $token['access_token'])
+            );
+            if (!($privacy['success'] ?? false) || ($privacy['data']['shared'] ?? null) !== false) {
+                $result['message'] = 'Private image import sharing could not be verified.';
+            } else {
+                $source = $this->getNativeDocument($temporaryId);
+                $uris = [];
+                $sourceDocument = (array) ($source['document'] ?? []);
+                array_walk_recursive($sourceDocument, static function ($entry, $key) use (&$uris): void {
+                    if ($key === 'contentUri' && is_string($entry)) $uris[] = $entry;
+                });
+                $uris = array_values(array_unique($uris));
+                $parts = count($uris) === 1 ? parse_url($uris[0]) : false;
+                $host = is_array($parts) ? strtolower((string) ($parts['host'] ?? '')) : '';
+                if (!($source['success'] ?? false) || ($parts['scheme'] ?? '') !== 'https'
+                    || !str_ends_with($host, '.googleusercontent.com')
+                    || isset($parts['user']) || isset($parts['pass']) || isset($parts['port'])) {
+                    $result['message'] = 'Google did not return one usable image from the private import.';
+                } else {
+                    $requests = [];
+                    if ($replaceRange !== null) $requests[] = ['deleteContentRange' => ['range' => $replaceRange]];
+                    $image = ['location' => $location, 'uri' => $uris[0]];
+                    if ($heightPt !== null) $image['objectSize'] = ['height' => ['magnitude' => $heightPt, 'unit' => 'PT']];
+                    $requests[] = ['insertInlineImage' => $image];
+                    $result = $this->batchUpdateNativeDocument($id, $requests, $requiredRevisionId);
+                    $result['image_inserted'] = (bool) ($result['success'] ?? false);
+                }
+            }
+        } catch (\Throwable) {
+            $result = ['success' => false, 'image_inserted' => false, 'message' => 'Native image insertion could not be completed; read the destination before retrying.'];
+        } finally {
+            $cleanup = $this->deleteDocument($temporaryId);
+        }
+
+        $result['temporary_document_deleted'] = (bool) ($cleanup['success'] ?? false);
+        if (!$result['temporary_document_deleted']) {
+            $result['success'] = false;
+            $result['temporary_document_id'] = $temporaryId;
+            $result['message'] = ($result['image_inserted'] ?? false)
+                ? 'Image inserted, but its temporary import could not be deleted. Do not insert it again.'
+                : 'Image insertion failed and its temporary import could not be deleted.';
+        }
+        return $result;
+    }
+
     public function deleteDocument(string $value, bool $quiet = false): array
     {
         $id = $this->id($value); if (!$id) return ['success' => false, 'message' => 'Missing Google Doc ID.'];
@@ -499,13 +597,18 @@ class GoogleDocsWriteService
 
     protected function importHtmlDocument(string $title, string $html, string $token, ?string $folderId = null): array
     {
-        $htmlBytes = strlen($html);
-        if ($htmlBytes === 0 || $htmlBytes > self::HTML_IMPORT_BYTES) {
+        return $this->importMediaDocument($title, $html, 'text/html; charset=UTF-8', $token, trim((string) $folderId) ?: $this->defaultFolderId());
+    }
+
+    protected function importMediaDocument(string $title, string $content, string $mimeType, string $token, ?string $folderId = null): array
+    {
+        $contentBytes = strlen($content);
+        if ($contentBytes === 0 || $contentBytes > self::HTML_IMPORT_BYTES) {
             return ['success' => false, 'message' => 'Google Doc HTML import exceeded the safe size limit.'];
         }
 
         $metadata = ['name' => $title, 'mimeType' => 'application/vnd.google-apps.document'];
-        $folderId = trim((string) $folderId) ?: $this->defaultFolderId();
+        $folderId = trim((string) $folderId);
         if ($folderId !== '') {
             $metadata['parents'] = [$folderId];
         }
@@ -522,8 +625,8 @@ class GoogleDocsWriteService
             'https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable&fields=id',
             array_merge($this->auth($token), [
                 'Content-Type: application/json; charset=UTF-8',
-                'X-Upload-Content-Type: text/html; charset=UTF-8',
-                'X-Upload-Content-Length: '.$htmlBytes,
+                'X-Upload-Content-Type: '.$mimeType,
+                'X-Upload-Content-Length: '.$contentBytes,
             ]),
             $metadataBody,
             $this->deadlineTimeout($deadline),
@@ -548,17 +651,17 @@ class GoogleDocsWriteService
         }
 
         $offset = 0;
-        while ($offset < $htmlBytes) {
-            $length = min(self::UPLOAD_CHUNK_BYTES, $htmlBytes - $offset);
+        while ($offset < $contentBytes) {
+            $length = min(self::UPLOAD_CHUNK_BYTES, $contentBytes - $offset);
             $end = $offset + $length - 1;
             $upload = $this->googleRequest(
                 'PUT',
                 $sessionUrl,
                 array_merge($this->auth($token), [
-                    'Content-Type: text/html; charset=UTF-8',
-                    'Content-Range: bytes '.$offset.'-'.$end.'/'.$htmlBytes,
+                    'Content-Type: '.$mimeType,
+                    'Content-Range: bytes '.$offset.'-'.$end.'/'.$contentBytes,
                 ]),
-                substr($html, $offset, $length),
+                substr($content, $offset, $length),
                 $this->deadlineTimeout($deadline),
                 1024 * 1024,
             );
@@ -573,7 +676,7 @@ class GoogleDocsWriteService
             $uploadResponse = $upload['response'];
             $offset = $end + 1;
 
-            if ($offset < $htmlBytes) {
+            if ($offset < $contentBytes) {
                 if ($uploadResponse->status !== 308 || !$this->acceptedUploadRange($uploadResponse, $end)) {
                     return ['success' => false, 'message' => 'Google Drive returned an invalid resumable upload checkpoint.'];
                 }
