@@ -9,6 +9,9 @@ window.googleDocsSettings = function () {
         newAccountEmail: '',
         accountResult: null,
         accountResults: {},
+        revealedCredentials: {},
+        revealingCredential: null,
+        credentialRevealResult: null,
         savingAccount: false,
         savingDefaultAccountId: null,
         testingAccountId: null,
@@ -54,6 +57,34 @@ window.googleDocsSettings = function () {
                 service_account: 'Service account',
                 public_read: 'Public read only',
             }[mode] || mode;
+        },
+
+        credentialIsRevealed(keyName) {
+            return Object.prototype.hasOwnProperty.call(this.revealedCredentials, keyName);
+        },
+
+        async toggleCredentialReveal(keyName) {
+            if (this.credentialIsRevealed(keyName)) {
+                const next = { ...this.revealedCredentials };
+                delete next[keyName];
+                this.revealedCredentials = next;
+                return;
+            }
+
+            this.revealingCredential = keyName;
+            this.credentialRevealResult = null;
+            try {
+                const { data } = await this.postJson(config.routes.revealCredential, { key_name: keyName });
+                if (data?.success && typeof data.value === 'string') {
+                    this.revealedCredentials = { ...this.revealedCredentials, [keyName]: data.value };
+                } else {
+                    this.credentialRevealResult = data;
+                }
+            } catch (error) {
+                this.credentialRevealResult = { success: false, message: error.message };
+            } finally {
+                this.revealingCredential = null;
+            }
         },
 
         manageAccount(accountId) {

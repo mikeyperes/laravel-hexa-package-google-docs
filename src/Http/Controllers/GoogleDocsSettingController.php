@@ -102,6 +102,7 @@ class GoogleDocsSettingController extends Controller
                     "defaultAccount" => route("settings.google-docs.default-account"),
                     "general" => route("settings.google-docs.general"),
                     "oauth" => route("settings.google-docs.oauth"),
+                    "revealCredential" => route("settings.google-docs.reveal-credential"),
                     "serviceAccount" => route("settings.google-docs.service-account"),
                     "testRead" => route("settings.google-docs.test-read"),
                     "testWrite" => route("settings.google-docs.test-write"),
@@ -151,6 +152,24 @@ class GoogleDocsSettingController extends Controller
 
         $test = $this->write->testWriteConnection();
         return response()->json(array_merge(['success' => (bool) ($test['success'] ?? false)], $test), ($test['success'] ?? false) ? 200 : 422);
+    }
+
+    public function revealCredential(Request $request): JsonResponse
+    {
+        $this->selectAccount($request);
+        $validated = $request->validate([
+            'key_name' => 'required|in:oauth_client_id,oauth_client_secret,oauth_refresh_token',
+        ]);
+
+        $value = $this->credentials->get($this->write->credentialSlug(), $validated['key_name']);
+        $response = $value === null || $value === ''
+            ? response()->json(['success' => false, 'message' => 'No saved value exists for this account.'], 404)
+            : response()->json(['success' => true, 'value' => $value]);
+
+        return $response->withHeaders([
+            'Cache-Control' => 'no-store, private',
+            'Pragma' => 'no-cache',
+        ]);
     }
 
     public function saveServiceAccount(Request $request): JsonResponse

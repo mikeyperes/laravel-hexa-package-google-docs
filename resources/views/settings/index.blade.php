@@ -4,7 +4,7 @@
 @section('header', 'Google Docs')
 
 @section('content')
-<div class="max-w-5xl space-y-6" x-data="googleDocsSettings()" x-init="init()">
+<div class="max-w-5xl flex flex-col gap-6" x-data="googleDocsSettings()" x-init="init()">
     <div class="rounded-xl border border-sky-200 bg-sky-50 p-5 text-sky-900">
         <div class="flex flex-wrap items-start justify-between gap-3">
             <div>
@@ -15,15 +15,15 @@
         </div>
     </div>
 
-    <section class="rounded-xl border border-gray-200 bg-white p-6 shadow-sm space-y-5">
+    <section class="rounded-xl border border-gray-200 bg-white p-6 shadow-sm flex flex-col gap-5">
         <div>
             <h2 class="text-lg font-semibold text-gray-900">Authenticated Google accounts</h2>
             <p class="mt-1 text-sm text-gray-500">Test the exact email you intend to use. A green credential status means values are saved; a successful connection test confirms Google accepts them now.</p>
         </div>
 
-        <div class="space-y-4">
+        <div class="flex flex-col gap-4">
             <template x-for="account in accounts" :key="account.id">
-                <article class="rounded-xl border bg-white p-5 space-y-4" :class="account.id === accountId ? 'border-sky-400' : 'border-gray-200'">
+                <article class="rounded-xl border bg-white p-5 flex flex-col gap-4" :class="account.id === accountId ? 'border-sky-400' : 'border-gray-200'">
                     <div class="flex flex-wrap items-start justify-between gap-4">
                         <div class="min-w-0">
                             <div class="flex flex-wrap items-center gap-2">
@@ -119,7 +119,7 @@
         </div>
     </section>
 
-    <section id="account-settings" class="rounded-xl border border-gray-200 bg-white p-6 shadow-sm space-y-5">
+    <section id="account-settings" class="rounded-xl border border-gray-200 bg-white p-6 shadow-sm flex flex-col gap-5">
         <div class="flex flex-wrap items-start justify-between gap-3">
             <div>
                 <p class="text-xs font-semibold uppercase text-sky-700">Account settings</p>
@@ -164,7 +164,7 @@
             </div>
         </details>
 
-        <div class="rounded-xl border border-emerald-200 bg-emerald-50 p-4 space-y-3">
+        <div class="rounded-xl border border-emerald-200 bg-emerald-50 p-4 flex flex-col gap-3">
             <div>
                 <p class="text-sm font-semibold text-emerald-900">Create this account's export folder</p>
                 <p class="mt-1 text-xs text-emerald-800">The folder is created using <strong x-text="selectedAccountLabel()"></strong> and saved as this account's default folder.</p>
@@ -188,7 +188,7 @@
         </div>
     </section>
 
-    <section class="rounded-xl border border-gray-200 bg-white p-6 shadow-sm space-y-5">
+    <section class="rounded-xl border border-gray-200 bg-white p-6 shadow-sm flex flex-col gap-5">
         <div>
             <p class="text-xs font-semibold uppercase text-sky-700">OAuth credentials for</p>
             <h2 class="mt-1 text-lg font-semibold text-gray-900 break-all" x-text="selectedAccountLabel()"></h2>
@@ -197,13 +197,26 @@
         <div class="rounded-xl border border-gray-200 bg-gray-50 p-4">
             <p class="text-sm font-semibold text-gray-900">Current saved values</p>
             <div class="mt-3 grid gap-3 text-sm md:grid-cols-3">
-                <div><p class="text-xs font-medium uppercase text-gray-500">Client ID</p><p class="mt-1 font-semibold" :class="context.has_oauth_client_id ? 'text-green-700' : 'text-red-700'" x-text="context.has_oauth_client_id ? 'Saved — hidden' : 'Missing'"></p></div>
-                <div><p class="text-xs font-medium uppercase text-gray-500">Client secret</p><p class="mt-1 font-semibold" :class="context.has_oauth_client_secret ? 'text-green-700' : 'text-red-700'" x-text="context.has_oauth_client_secret ? 'Saved — hidden' : 'Missing'"></p></div>
-                <div><p class="text-xs font-medium uppercase text-gray-500">Refresh token</p><p class="mt-1 font-semibold" :class="context.has_oauth_refresh_token ? 'text-green-700' : 'text-red-700'" x-text="context.has_oauth_refresh_token ? 'Saved — hidden; replace below' : 'Missing — add below'"></p></div>
+                <div class="rounded-lg border border-gray-200 bg-white p-3 flex flex-col gap-2">
+                    <div class="flex items-center justify-between gap-2"><p class="text-xs font-medium uppercase text-gray-500">Client ID</p><button x-show="context.has_oauth_client_id" @click="toggleCredentialReveal('oauth_client_id')" :disabled="revealingCredential === 'oauth_client_id'" type="button" class="rounded-lg border border-gray-300 px-2 py-1 text-xs font-semibold text-gray-700 hover:bg-gray-50 disabled:opacity-50" x-text="revealingCredential === 'oauth_client_id' ? 'Loading…' : (credentialIsRevealed('oauth_client_id') ? 'Hide' : 'Reveal')"></button></div>
+                    <p class="font-semibold" :class="context.has_oauth_client_id ? 'text-green-700' : 'text-red-700'" x-text="context.has_oauth_client_id ? 'Saved' : 'Missing'"></p>
+                    <code x-show="credentialIsRevealed('oauth_client_id')" x-cloak class="rounded-lg border border-gray-200 bg-gray-50 p-2 text-xs text-gray-900 break-all" x-text="revealedCredentials.oauth_client_id || ''"></code>
+                </div>
+                <div class="rounded-lg border border-gray-200 bg-white p-3 flex flex-col gap-2">
+                    <div class="flex items-center justify-between gap-2"><p class="text-xs font-medium uppercase text-gray-500">Client secret</p><button x-show="context.has_oauth_client_secret" @click="toggleCredentialReveal('oauth_client_secret')" :disabled="revealingCredential === 'oauth_client_secret'" type="button" class="rounded-lg border border-gray-300 px-2 py-1 text-xs font-semibold text-gray-700 hover:bg-gray-50 disabled:opacity-50" x-text="revealingCredential === 'oauth_client_secret' ? 'Loading…' : (credentialIsRevealed('oauth_client_secret') ? 'Hide' : 'Reveal')"></button></div>
+                    <p class="font-semibold" :class="context.has_oauth_client_secret ? 'text-green-700' : 'text-red-700'" x-text="context.has_oauth_client_secret ? 'Saved' : 'Missing'"></p>
+                    <code x-show="credentialIsRevealed('oauth_client_secret')" x-cloak class="rounded-lg border border-gray-200 bg-gray-50 p-2 text-xs text-gray-900 break-all" x-text="revealedCredentials.oauth_client_secret || ''"></code>
+                </div>
+                <div class="rounded-lg border border-gray-200 bg-white p-3 flex flex-col gap-2">
+                    <div class="flex items-center justify-between gap-2"><p class="text-xs font-medium uppercase text-gray-500">Refresh token</p><button x-show="context.has_oauth_refresh_token" @click="toggleCredentialReveal('oauth_refresh_token')" :disabled="revealingCredential === 'oauth_refresh_token'" type="button" class="rounded-lg border border-gray-300 px-2 py-1 text-xs font-semibold text-gray-700 hover:bg-gray-50 disabled:opacity-50" x-text="revealingCredential === 'oauth_refresh_token' ? 'Loading…' : (credentialIsRevealed('oauth_refresh_token') ? 'Hide' : 'Reveal')"></button></div>
+                    <p class="font-semibold" :class="context.has_oauth_refresh_token ? 'text-green-700' : 'text-red-700'" x-text="context.has_oauth_refresh_token ? 'Saved — replace below if expired' : 'Missing — add below'"></p>
+                    <code x-show="credentialIsRevealed('oauth_refresh_token')" x-cloak class="rounded-lg border border-gray-200 bg-gray-50 p-2 text-xs text-gray-900 break-all" x-text="revealedCredentials.oauth_refresh_token || ''"></code>
+                </div>
             </div>
-            <p class="mt-3 text-xs text-gray-600">Saved secrets cannot be displayed. To fix an expired token, save a newly generated refresh token in the field below; it replaces only this account's old token.</p>
+            <p x-show="credentialRevealResult?.message" x-cloak class="mt-3 text-sm text-red-700" x-text="credentialRevealResult?.message || ''"></p>
+            <p class="mt-3 text-xs text-gray-600">Reveal shows the current saved value for this account in this browser. Use Hide when you are finished. Saving a replacement below changes only this account.</p>
         </div>
-        <div class="rounded-xl border border-blue-200 bg-blue-50 p-4 text-sm text-blue-900 space-y-3">
+        <div class="rounded-xl border border-blue-200 bg-blue-50 p-4 text-sm text-blue-900 flex flex-col gap-3">
             <p class="font-semibold">Replace the failed refresh token — exact steps</p>
             <ol class="list-decimal space-y-3 pl-5 text-blue-800">
                 <li>Open <a href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noopener" class="font-medium text-blue-700 underline hover:text-blue-900">Google Cloud → Credentials</a> and open the OAuth client used for this email. Its type must be <strong>Web application</strong>.</li>
@@ -251,12 +264,12 @@
         </div>
     </section>
 
-    <section class="rounded-xl border border-gray-200 bg-white p-6 shadow-sm space-y-5">
+    <section class="rounded-xl border border-gray-200 bg-white p-6 shadow-sm flex flex-col gap-5">
         <div>
             <h2 class="text-lg font-semibold text-gray-900">Service-account write credentials</h2>
             <p class="mt-1 text-sm text-gray-500">These values apply only to <strong x-text="selectedAccountLabel()"></strong>. Use this mode only when Hexa should write through a service account.</p>
         </div>
-        <div class="rounded-xl border border-gray-200 bg-gray-50 p-4 text-sm text-gray-700 space-y-2">
+        <div class="rounded-xl border border-gray-200 bg-gray-50 p-4 text-sm text-gray-700 flex flex-col gap-2">
             <p class="font-semibold text-gray-900">Service-account path</p>
             <p>Create or manage service accounts in <a href="https://console.cloud.google.com/iam-admin/serviceaccounts" target="_blank" rel="noopener" class="font-medium text-blue-700 underline hover:text-blue-900">Google Cloud Console → Service Accounts</a>. Save the full JSON key below, select <strong>Service account write</strong> in this account's settings, then click <strong>Test connection</strong> on its card.</p>
         </div>
@@ -268,7 +281,7 @@
         />
     </section>
 
-    <section class="rounded-xl border border-gray-200 bg-white p-6 shadow-sm space-y-5">
+    <section class="rounded-xl border border-gray-200 bg-white p-6 shadow-sm flex flex-col gap-5">
         <div>
             <h2 class="text-lg font-semibold text-gray-900">Public document tester</h2>
             <p class="mt-1 text-sm text-gray-500">This keeps the existing public-read workflow intact for importing published Google Docs URLs.</p>
@@ -282,7 +295,7 @@
             <p x-show="readResult?.message" x-cloak class="text-sm" :class="readResult?.success ? 'text-green-700' : 'text-red-700'" x-text="readResult?.message || ''"></p>
         </div>
         <template x-if="readResult && readResult.success">
-            <div class="space-y-4 border-t border-gray-100 pt-4">
+            <div class="flex flex-col gap-4 border-t border-gray-100 pt-4">
                 <dl class="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
                     <div class="rounded-lg bg-gray-50 p-3 border border-gray-200"><dt class="text-gray-500">Title</dt><dd class="mt-1 font-medium text-gray-900" x-text="readResult.title || 'Untitled Document'"></dd></div>
                     <div class="rounded-lg bg-gray-50 p-3 border border-gray-200"><dt class="text-gray-500">Document ID</dt><dd class="mt-1 font-mono text-xs text-gray-900 break-all" x-text="readResult.document_id"></dd></div>
