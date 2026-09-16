@@ -51,6 +51,22 @@ class GoogleDocsSettingController extends Controller
     {
         $this->selectAccount($request);
         $context = $this->write->writeContext();
+        $accounts = array_map(function (array $account): array {
+            $accountContext = $this->write->forAccount((string) $account['id'])->writeContext();
+
+            return array_merge($account, [
+                'connected_email' => (string) ($accountContext['connected_email'] ?? ''),
+                'auth_mode' => (string) ($accountContext['auth_mode'] ?? 'public_read'),
+                'owner_email' => (string) ($accountContext['owner_email'] ?? ''),
+                'default_folder_id' => (string) ($accountContext['default_folder_id'] ?? ''),
+                'has_oauth_client_id' => (bool) ($accountContext['has_oauth_client_id'] ?? false),
+                'has_oauth_client_secret' => (bool) ($accountContext['has_oauth_client_secret'] ?? false),
+                'has_oauth_refresh_token' => (bool) ($accountContext['has_oauth_refresh_token'] ?? false),
+                'has_oauth_credentials' => (bool) ($accountContext['has_oauth_credentials'] ?? false),
+                'has_service_account' => (bool) ($accountContext['has_service_account'] ?? false),
+                'has_write_access' => (bool) ($accountContext['has_write_access'] ?? false),
+            ]);
+        }, $this->write->accounts());
         $general = [
             "default_format" => (string) Setting::getValue("google_docs_default_format", config("google-docs.default_format", "txt")),
             "timeout_seconds" => (int) Setting::getValue("google_docs_timeout_seconds", config("google-docs.timeout_seconds", 15)),
@@ -64,7 +80,7 @@ class GoogleDocsSettingController extends Controller
         return view("google-docs::settings.index", [
             "credentialSlug" => $this->write->credentialSlug(),
             "settingsConfig" => [
-                "accounts" => $this->write->accounts(),
+                "accounts" => $accounts,
                 "accountId" => $this->write->accountId(),
                 "defaultAccountId" => (string) Setting::getValue("google_docs_default_account", "legacy"),
                 "context" => [
@@ -72,6 +88,9 @@ class GoogleDocsSettingController extends Controller
                     "owner_email" => $general["owner_email"],
                     "default_folder_id" => $general["default_folder_id"],
                     "connected_email" => (string) ($context["connected_email"] ?? ""),
+                    "has_oauth_client_id" => (bool) ($context["has_oauth_client_id"] ?? false),
+                    "has_oauth_client_secret" => (bool) ($context["has_oauth_client_secret"] ?? false),
+                    "has_oauth_refresh_token" => (bool) ($context["has_oauth_refresh_token"] ?? false),
                     "has_oauth_credentials" => (bool) ($context["has_oauth_credentials"] ?? false),
                     "has_service_account" => (bool) ($context["has_service_account"] ?? false),
                     "has_write_access" => (bool) ($context["has_write_access"] ?? false),

@@ -105,9 +105,10 @@ class GoogleDocsWriteService
     public function writeContext(): array
     {
         $mode = $this->authMode();
-        $hasOauthCredentials = $this->credentials->exists($this->credentialSlug(), 'oauth_client_id')
-            && $this->credentials->exists($this->credentialSlug(), 'oauth_client_secret')
-            && $this->credentials->exists($this->credentialSlug(), 'oauth_refresh_token');
+        $hasOauthClientId = $this->credentials->exists($this->credentialSlug(), 'oauth_client_id');
+        $hasOauthClientSecret = $this->credentials->exists($this->credentialSlug(), 'oauth_client_secret');
+        $hasOauthRefreshToken = $this->credentials->exists($this->credentialSlug(), 'oauth_refresh_token');
+        $hasOauthCredentials = $hasOauthClientId && $hasOauthClientSecret && $hasOauthRefreshToken;
         $hasServiceAccount = $this->serviceAccountJson() !== '';
 
         return [
@@ -117,6 +118,9 @@ class GoogleDocsWriteService
             'service_account_email' => $this->serviceAccountEmail() ?: null,
             'owner_email' => $this->ownerEmail(),
             'default_folder_id' => $this->defaultFolderId(),
+            'has_oauth_client_id' => $hasOauthClientId,
+            'has_oauth_client_secret' => $hasOauthClientSecret,
+            'has_oauth_refresh_token' => $hasOauthRefreshToken,
             'has_oauth_credentials' => $hasOauthCredentials,
             'has_service_account' => $hasServiceAccount,
             'has_write_access' => $mode === 'oauth_user'
@@ -1253,9 +1257,24 @@ class GoogleDocsWriteService
     protected function googleHttpError(OutboundHttpResponse $response): string
     {
         $body = json_decode($response->body, true);
+        $error = is_array($body) ? ($body['error'] ?? null) : null;
+        $errorCode = is_string($error) ? mb_strtolower($error) : '';
         $message = is_array($body)
-            ? mb_strtolower((string) ($body['error']['message'] ?? $body['message'] ?? ''))
+            ? mb_strtolower((string) (
+                (is_array($error) ? ($error['message'] ?? '') : '')
+                ?: ($body['error_description'] ?? $body['message'] ?? '')
+            ))
             : '';
+
+        if ($response->status === 400 && ($errorCode === 'invalid_grant' || str_contains($message, 'expired or revoked'))) {
+            return 'Google rejected the saved refresh token because it expired, was revoked, or belongs to a different OAuth client. Generate a new refresh token in OAuth Playground with this account\'s saved client ID and secret, save the new token, then test again.';
+        }
+        if ($response->status === 400 && $errorCode === 'invalid_client') {
+            return 'Google rejected the OAuth client ID or client secret. Copy both values again from the same Google Cloud OAuth web client, save them for this account, then generate a new refresh token with that client.';
+        }
+        if ($response->status === 400 && ($errorCode === 'invalid_scope' || str_contains($message, 'invalid scope'))) {
+            return 'Google rejected the requested OAuth scopes. Generate a new refresh token with the Google Docs scope and either the Drive or Drive File scope shown in this account\'s setup steps.';
+        }
 
         if ($response->status === 401) {
             return 'Google API authentication failed.';
