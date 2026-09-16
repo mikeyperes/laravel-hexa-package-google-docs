@@ -1267,13 +1267,13 @@ class GoogleDocsWriteService
             : '';
 
         if ($response->status === 400 && ($errorCode === 'invalid_grant' || str_contains($message, 'expired or revoked'))) {
-            return 'Google rejected the saved refresh token because it expired, was revoked, or belongs to a different OAuth client. Generate a new refresh token in OAuth Playground with this account\'s saved client ID and secret, save the new token, then test again.';
+            return 'Google rejected the saved refresh token because it expired, was revoked, or belongs to a different OAuth client. Open this account in Google Docs Settings and click Refresh token.';
         }
         if ($response->status === 400 && $errorCode === 'invalid_client') {
-            return 'Google rejected the OAuth client ID or client secret. Copy both values again from the same Google Cloud OAuth web client, save them for this account, then generate a new refresh token with that client.';
+            return 'Google rejected the OAuth client ID or client secret. Save both values again from the same Google Cloud OAuth web client, then click Refresh token.';
         }
         if ($response->status === 400 && ($errorCode === 'invalid_scope' || str_contains($message, 'invalid scope'))) {
-            return 'Google rejected the requested OAuth scopes. Generate a new refresh token with the Google Docs scope and either the Drive or Drive File scope shown in this account\'s setup steps.';
+            return 'Google rejected the requested OAuth scopes. Open this account in Google Docs Settings and click Refresh token to approve the required Docs and Drive scopes.';
         }
 
         if ($response->status === 401) {

@@ -9,13 +9,11 @@ window.googleDocsSettings = function () {
         newAccountEmail: '',
         accountResult: null,
         accountResults: {},
-        revealedCredentials: {},
-        revealingCredential: null,
-        credentialRevealResult: null,
         savingAccount: false,
         savingDefaultAccountId: null,
         testingAccountId: null,
         smokingAccountId: null,
+        refreshingToken: false,
         savingGeneral: false,
         savingOauth: false,
         savingServiceAccount: false,
@@ -59,34 +57,6 @@ window.googleDocsSettings = function () {
             }[mode] || mode;
         },
 
-        credentialIsRevealed(keyName) {
-            return Object.prototype.hasOwnProperty.call(this.revealedCredentials, keyName);
-        },
-
-        async toggleCredentialReveal(keyName) {
-            if (this.credentialIsRevealed(keyName)) {
-                const next = { ...this.revealedCredentials };
-                delete next[keyName];
-                this.revealedCredentials = next;
-                return;
-            }
-
-            this.revealingCredential = keyName;
-            this.credentialRevealResult = null;
-            try {
-                const { data } = await this.postJson(config.routes.revealCredential, { key_name: keyName });
-                if (data?.success && typeof data.value === 'string') {
-                    this.revealedCredentials = { ...this.revealedCredentials, [keyName]: data.value };
-                } else {
-                    this.credentialRevealResult = data;
-                }
-            } catch (error) {
-                this.credentialRevealResult = { success: false, message: error.message };
-            } finally {
-                this.revealingCredential = null;
-            }
-        },
-
         manageAccount(accountId) {
             const url = new URL(window.location.href);
             url.searchParams.set('account_id', accountId);
@@ -96,6 +66,13 @@ window.googleDocsSettings = function () {
 
         selectAccount() {
             this.manageAccount(this.accountId);
+        },
+
+        refreshToken() {
+            this.refreshingToken = true;
+            const url = new URL(config.routes.oauthRedirect, window.location.origin);
+            url.searchParams.set('account_id', this.accountId);
+            window.location.assign(url.toString());
         },
 
         updateAccount(accountId, changes) {

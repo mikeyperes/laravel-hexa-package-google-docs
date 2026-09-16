@@ -5,6 +5,16 @@
 
 @section('content')
 <div class="max-w-5xl flex flex-col gap-6" x-data="googleDocsSettings()" x-init="init()">
+    @if(session('success'))
+        <div class="rounded-xl border border-green-200 bg-green-50 p-4 text-sm font-medium text-green-900">{{ session('success') }}</div>
+    @endif
+    @if(session('warning'))
+        <div class="rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm font-medium text-amber-950">{{ session('warning') }}</div>
+    @endif
+    @if(session('error'))
+        <div class="rounded-xl border border-red-200 bg-red-50 p-4 text-sm font-medium text-red-900">{{ session('error') }}</div>
+    @endif
+
     <div class="rounded-xl border border-sky-200 bg-sky-50 p-5 text-sky-900">
         <div class="flex flex-wrap items-start justify-between gap-3">
             <div>
@@ -82,12 +92,11 @@
                                 <p class="font-semibold">Fix this account in this order</p>
                                 <ol class="mt-2 list-decimal space-y-2 pl-5">
                                     <li>Click <strong>Manage settings</strong> on this account and confirm <strong>OAuth user write</strong> is selected.</li>
-                                    <li>In Google Cloud, use one OAuth <strong>Web application</strong> client and enable both the Google Drive API and Google Docs API.</li>
-                                    <li>Add <code class="rounded bg-red-100 px-1 py-0.5 text-xs">https://developers.google.com/oauthplayground</code> under <strong>Authorized redirect URIs</strong>.</li>
-                                    <li>In OAuth Playground, enable <strong>Use your own OAuth credentials</strong>, use the same client ID and secret, and sign in as <strong x-text="account.label"></strong>.</li>
-                                    <li>Authorize the Docs + Drive scopes, exchange the code, save the new <strong>refresh token</strong> for this account, then click <strong>Test connection</strong> again.</li>
+                                    <li>Confirm this profile has its OAuth client ID and client secret saved.</li>
+                                    <li>Click <strong>Refresh token</strong>, choose <strong x-text="account.label"></strong> at Google, and approve access.</li>
+                                    <li>This page will save the returned token and run <strong>Test connection</strong> automatically.</li>
                                 </ol>
-                                <p class="mt-3 font-medium">If the old error was HTTP 400, do not reuse the old refresh token. It is usually expired, revoked, or tied to a different OAuth client.</p>
+                                <p class="mt-3 font-medium">If Google reports redirect_uri_mismatch, add the callback URI shown in this account's OAuth section to that exact Web application client, save it, and click Refresh token again.</p>
                             </div>
                         </div>
                     </template>
@@ -97,9 +106,9 @@
                         <ol class="mt-3 list-decimal space-y-2 pl-5 text-blue-800">
                             <li>Open <a href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noopener" class="font-medium underline">Google Cloud credentials</a> and open the OAuth web client used for this account.</li>
                             <li>Enable the <a href="https://console.cloud.google.com/apis/library/drive.googleapis.com" target="_blank" rel="noopener" class="font-medium underline">Drive API</a> and <a href="https://console.cloud.google.com/apis/library/docs.googleapis.com" target="_blank" rel="noopener" class="font-medium underline">Docs API</a> in that project.</li>
-                            <li>Add <code class="rounded bg-blue-100 px-1 py-0.5 text-xs">https://developers.google.com/oauthplayground</code> as an authorized redirect URI.</li>
-                            <li>In <a href="https://developers.google.com/oauthplayground" target="_blank" rel="noopener" class="font-medium underline">OAuth Playground</a>, use your own OAuth credentials and authorize <code class="break-all text-xs">https://www.googleapis.com/auth/documents https://www.googleapis.com/auth/drive</code> while signed in as <strong x-text="account.label"></strong>.</li>
-                            <li>Exchange the authorization code, copy the new refresh token, save all three OAuth values under this account, and run <strong>Test connection</strong>.</li>
+                            <li>Save the client ID and client secret under this account. Register the callback URI shown below if Google has not seen it before.</li>
+                            <li>Click <strong>Refresh token</strong>, sign in as <strong x-text="account.label"></strong>, and approve Docs + Drive access.</li>
+                            <li>Hexa saves the new token and tests the account automatically. Then run <strong>Full write test</strong> when you want to verify create, update, and delete.</li>
                         </ol>
                     </details>
                 </article>
@@ -192,76 +201,50 @@
         <div>
             <p class="text-xs font-semibold uppercase text-sky-700">OAuth credentials for</p>
             <h2 class="mt-1 text-lg font-semibold text-gray-900 break-all" x-text="selectedAccountLabel()"></h2>
-            <p class="mt-1 text-sm text-gray-500">These credentials belong only to this email profile. Saving them does not change another Google account.</p>
+            <p class="mt-1 text-sm text-gray-500">Each saved value is shown below as its own full-width row. Reveal, Copy, Change, and save behavior comes from shared Hexa Core.</p>
         </div>
-        <div class="rounded-xl border border-gray-200 bg-gray-50 p-4">
-            <p class="text-sm font-semibold text-gray-900">Current saved values</p>
-            <div class="mt-3 grid gap-3 text-sm md:grid-cols-3">
-                <div class="rounded-lg border border-gray-200 bg-white p-3 flex flex-col gap-2">
-                    <div class="flex items-center justify-between gap-2"><p class="text-xs font-medium uppercase text-gray-500">Client ID</p><button x-show="context.has_oauth_client_id" @click="toggleCredentialReveal('oauth_client_id')" :disabled="revealingCredential === 'oauth_client_id'" type="button" class="rounded-lg border border-gray-300 px-2 py-1 text-xs font-semibold text-gray-700 hover:bg-gray-50 disabled:opacity-50" x-text="revealingCredential === 'oauth_client_id' ? 'Loading…' : (credentialIsRevealed('oauth_client_id') ? 'Hide' : 'Reveal')"></button></div>
-                    <p class="font-semibold" :class="context.has_oauth_client_id ? 'text-green-700' : 'text-red-700'" x-text="context.has_oauth_client_id ? 'Saved' : 'Missing'"></p>
-                    <code x-show="credentialIsRevealed('oauth_client_id')" x-cloak class="rounded-lg border border-gray-200 bg-gray-50 p-2 text-xs text-gray-900 break-all" x-text="revealedCredentials.oauth_client_id || ''"></code>
-                </div>
-                <div class="rounded-lg border border-gray-200 bg-white p-3 flex flex-col gap-2">
-                    <div class="flex items-center justify-between gap-2"><p class="text-xs font-medium uppercase text-gray-500">Client secret</p><button x-show="context.has_oauth_client_secret" @click="toggleCredentialReveal('oauth_client_secret')" :disabled="revealingCredential === 'oauth_client_secret'" type="button" class="rounded-lg border border-gray-300 px-2 py-1 text-xs font-semibold text-gray-700 hover:bg-gray-50 disabled:opacity-50" x-text="revealingCredential === 'oauth_client_secret' ? 'Loading…' : (credentialIsRevealed('oauth_client_secret') ? 'Hide' : 'Reveal')"></button></div>
-                    <p class="font-semibold" :class="context.has_oauth_client_secret ? 'text-green-700' : 'text-red-700'" x-text="context.has_oauth_client_secret ? 'Saved' : 'Missing'"></p>
-                    <code x-show="credentialIsRevealed('oauth_client_secret')" x-cloak class="rounded-lg border border-gray-200 bg-gray-50 p-2 text-xs text-gray-900 break-all" x-text="revealedCredentials.oauth_client_secret || ''"></code>
-                </div>
-                <div class="rounded-lg border border-gray-200 bg-white p-3 flex flex-col gap-2">
-                    <div class="flex items-center justify-between gap-2"><p class="text-xs font-medium uppercase text-gray-500">Refresh token</p><button x-show="context.has_oauth_refresh_token" @click="toggleCredentialReveal('oauth_refresh_token')" :disabled="revealingCredential === 'oauth_refresh_token'" type="button" class="rounded-lg border border-gray-300 px-2 py-1 text-xs font-semibold text-gray-700 hover:bg-gray-50 disabled:opacity-50" x-text="revealingCredential === 'oauth_refresh_token' ? 'Loading…' : (credentialIsRevealed('oauth_refresh_token') ? 'Hide' : 'Reveal')"></button></div>
-                    <p class="font-semibold" :class="context.has_oauth_refresh_token ? 'text-green-700' : 'text-red-700'" x-text="context.has_oauth_refresh_token ? 'Saved — replace below if expired' : 'Missing — add below'"></p>
-                    <code x-show="credentialIsRevealed('oauth_refresh_token')" x-cloak class="rounded-lg border border-gray-200 bg-gray-50 p-2 text-xs text-gray-900 break-all" x-text="revealedCredentials.oauth_refresh_token || ''"></code>
-                </div>
+        <div class="rounded-xl border border-sky-200 bg-sky-50 p-5 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+                <p class="font-semibold text-sky-950">Automatic token refresh</p>
+                <p class="mt-1 text-sm text-sky-800">Click once, choose <strong x-text="selectedAccountLabel()"></strong> at Google, and approve access. Hexa saves the new refresh token and tests this account when Google sends you back.</p>
             </div>
-            <p x-show="credentialRevealResult?.message" x-cloak class="mt-3 text-sm text-red-700" x-text="credentialRevealResult?.message || ''"></p>
-            <p class="mt-3 text-xs text-gray-600">Reveal shows the current saved value for this account in this browser. Use Hide when you are finished. Saving a replacement below changes only this account.</p>
+            <button @click="refreshToken" :disabled="refreshingToken" type="button" class="inline-flex shrink-0 items-center justify-center gap-2 rounded-lg bg-sky-700 px-5 py-3 text-sm font-semibold text-white hover:bg-sky-800 disabled:opacity-50">
+                <svg x-show="refreshingToken" x-cloak class="h-4 w-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg>
+                <span x-text="refreshingToken ? 'Opening Google…' : 'Refresh token'"></span>
+            </button>
         </div>
-        <div class="rounded-xl border border-blue-200 bg-blue-50 p-4 text-sm text-blue-900 flex flex-col gap-3">
-            <p class="font-semibold">Replace the failed refresh token — exact steps</p>
-            <ol class="list-decimal space-y-3 pl-5 text-blue-800">
-                <li>Open <a href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noopener" class="font-medium text-blue-700 underline hover:text-blue-900">Google Cloud → Credentials</a> and open the OAuth client used for this email. Its type must be <strong>Web application</strong>.</li>
-                <li>In the same Google Cloud project, enable the <a href="https://console.cloud.google.com/apis/library/drive.googleapis.com" target="_blank" rel="noopener" class="font-medium text-blue-700 underline">Google Drive API</a> and <a href="https://console.cloud.google.com/apis/library/docs.googleapis.com" target="_blank" rel="noopener" class="font-medium text-blue-700 underline">Google Docs API</a>.</li>
-                <li>Under <strong>Authorized redirect URIs</strong>, add <code class="rounded bg-blue-100 px-1.5 py-0.5 text-xs">https://developers.google.com/oauthplayground</code>. Save the OAuth client.</li>
-                <li>Copy that client's ID and secret. Open <a href="https://developers.google.com/oauthplayground" target="_blank" rel="noopener" class="font-medium text-blue-700 underline hover:text-blue-900">OAuth Playground</a>, click the gear, enable <strong>Use your own OAuth credentials</strong>, paste both values, and close the gear panel.</li>
-                <li>In OAuth Playground Step 1, paste <code class="rounded bg-blue-100 px-1.5 py-0.5 text-xs break-all">https://www.googleapis.com/auth/documents https://www.googleapis.com/auth/drive</code> into the scopes box and click <strong>Authorize APIs</strong>.</li>
-                <li>Sign in as <strong x-text="selectedAccountLabel()"></strong> and approve access. If another Google email appears, sign out and restart this step with the correct account.</li>
-                <li>In OAuth Playground Step 2, click <strong>Exchange authorization code for tokens</strong>. Copy the value labeled <strong>Refresh token</strong>, not the access token.</li>
-                <li>Back on this page, save the client ID, client secret, and new refresh token in the three fields below. The new refresh token replaces the saved hidden token.</li>
-                <li>Go to this email's account card, click <strong>Test connection</strong>, then click <strong>Full write test</strong> after the connection passes.</li>
-            </ol>
-        </div>
-        <div class="rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-950">
-            <p class="font-semibold">If Test connection fails</p>
-            <ol class="mt-2 list-decimal space-y-2 pl-5">
-                <li><strong>HTTP 400 or invalid_grant:</strong> generate a completely new refresh token in OAuth Playground. The saved token is expired, revoked, or tied to a different OAuth client.</li>
-                <li><strong>OAuth client rejected:</strong> copy the client ID and secret again from the same web client, save both, then generate another refresh token with those exact values.</li>
-                <li><strong>redirect_uri_mismatch:</strong> add the OAuth Playground URL under Authorized redirect URIs and retry authorization.</li>
-                <li><strong>Insufficient scope:</strong> generate a new token with the full Docs + Drive scopes shown above. An existing token cannot be upgraded.</li>
-                <li><strong>Wrong connected email:</strong> sign out of Google in OAuth Playground, sign in as <strong x-text="selectedAccountLabel()"></strong>, and create the token again.</li>
-            </ol>
-        </div>
-        <div class="grid gap-4 md:grid-cols-2">
-            <div class="md:col-span-2">
-                <x-hexa-credential-field
-                    :slug="$credentialSlug"
-                    key-name="oauth_client_id"
-                    label="Google OAuth client ID"
-                    help="Create this in Google Cloud Console under APIs & Services → Credentials. Save it here, then save the client secret and refresh token below."
-                />
-            </div>
+
+        <div class="flex flex-col gap-4">
+            <x-hexa-credential-field
+                :slug="$credentialSlug"
+                key-name="oauth_client_id"
+                label="Google OAuth client ID"
+                help="The Web application client ID saved for this email profile."
+            />
             <x-hexa-credential-field
                 :slug="$credentialSlug"
                 key-name="oauth_client_secret"
                 label="Google OAuth client secret"
-                help="Use the client secret from the same OAuth client as the client ID above."
+                help="The client secret from the same Web application client as the client ID above."
             />
             <x-hexa-credential-field
                 :slug="$credentialSlug"
                 key-name="oauth_refresh_token"
                 label="Google OAuth refresh token"
-                help="Generate this in OAuth Playground while signed in as the selected Google account using the Docs and Drive scopes listed above."
+                help="Refresh token saves this value automatically. Manual replacement remains available through Change."
             />
         </div>
+
+        <details class="rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-950">
+            <summary class="cursor-pointer font-semibold">If Refresh token fails</summary>
+            <ol class="mt-3 list-decimal space-y-2 pl-5">
+                <li><strong>Missing client ID or secret:</strong> save both rows above, then click <strong>Refresh token</strong> again.</li>
+                <li><strong>redirect_uri_mismatch:</strong> open the same <a href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noopener" class="font-medium underline">Google OAuth Web application client</a>, add this exact Authorized redirect URI, and save it:<br><code class="mt-2 inline-block break-all rounded bg-amber-100 px-2 py-1 text-xs">{{ route('settings.google-docs.oauth.callback') }}</code></li>
+                <li><strong>Wrong Google email:</strong> click Refresh token again and choose <strong x-text="selectedAccountLabel()"></strong>. Hexa rejects a token returned for another profile.</li>
+                <li><strong>Access blocked or app not configured:</strong> enable the <a href="https://console.cloud.google.com/apis/library/drive.googleapis.com" target="_blank" rel="noopener" class="font-medium underline">Drive API</a> and <a href="https://console.cloud.google.com/apis/library/docs.googleapis.com" target="_blank" rel="noopener" class="font-medium underline">Docs API</a>, then add this email as a test user if the OAuth app is still in testing.</li>
+                <li><strong>No refresh token returned:</strong> remove this app under Google Account → Security → Third-party connections, then click Refresh token and approve access again.</li>
+            </ol>
+        </details>
     </section>
 
     <section class="rounded-xl border border-gray-200 bg-white p-6 shadow-sm flex flex-col gap-5">
