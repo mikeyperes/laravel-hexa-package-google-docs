@@ -75,7 +75,7 @@
                             <svg x-show="testingAccountId === account.id" x-cloak class="h-4 w-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg>
                             <span x-text="testingAccountId === account.id ? 'Testing…' : 'Test connection'"></span>
                         </button>
-                        <button x-show="account.auth_mode === 'oauth_user'" @click="refreshToken(account.id)" :disabled="refreshingAccountId !== null" type="button" class="inline-flex items-center gap-2 rounded-lg bg-sky-700 px-4 py-2 text-sm font-medium text-white hover:bg-sky-800 disabled:opacity-50">
+                        <button x-show="account.auth_mode === 'oauth_user'" @click="refreshToken(account.id)" :disabled="refreshingAccountId !== null" type="button" class="inline-flex items-center gap-2 rounded-lg bg-sky-600 px-4 py-2 text-sm font-medium text-white hover:bg-sky-700 disabled:opacity-50">
                             <svg x-show="refreshingAccountId === account.id" x-cloak class="h-4 w-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg>
                             <span x-text="refreshingAccountId === account.id ? 'Opening Google…' : 'Refresh token'"></span>
                         </button>
@@ -239,7 +239,7 @@
                 <p class="font-semibold text-sky-950">Automatic token refresh</p>
                 <p class="mt-1 text-sm text-sky-800">Click once, choose <strong x-text="selectedAccountLabel()"></strong> at Google, and approve access. Hexa saves the new refresh token and tests this account when Google sends you back.</p>
             </div>
-            <button @click="refreshToken(accountId)" :disabled="refreshingAccountId !== null" type="button" class="inline-flex shrink-0 items-center justify-center gap-2 rounded-lg bg-sky-700 px-5 py-3 text-sm font-semibold text-white hover:bg-sky-800 disabled:opacity-50">
+            <button @click="refreshToken(accountId)" :disabled="refreshingAccountId !== null" type="button" class="inline-flex shrink-0 items-center justify-center gap-2 rounded-lg bg-sky-600 px-5 py-3 text-sm font-semibold text-white hover:bg-sky-700 disabled:opacity-50">
                 <svg x-show="refreshingAccountId === accountId" x-cloak class="h-4 w-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg>
                 <span x-text="refreshingAccountId === accountId ? 'Opening Google…' : 'Refresh token'"></span>
             </button>
