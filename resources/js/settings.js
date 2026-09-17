@@ -13,7 +13,7 @@ window.googleDocsSettings = function () {
         savingDefaultAccountId: null,
         testingAccountId: null,
         smokingAccountId: null,
-        refreshingToken: false,
+        refreshingAccountId: null,
         savingGeneral: false,
         savingOauth: false,
         savingServiceAccount: false,
@@ -68,10 +68,10 @@ window.googleDocsSettings = function () {
             this.manageAccount(this.accountId);
         },
 
-        refreshToken() {
-            this.refreshingToken = true;
+        refreshToken(accountId = this.accountId) {
+            this.refreshingAccountId = accountId;
             const url = new URL(config.routes.oauthRedirect, window.location.origin);
-            url.searchParams.set('account_id', this.accountId);
+            url.searchParams.set('account_id', accountId);
             window.location.assign(url.toString());
         },
 

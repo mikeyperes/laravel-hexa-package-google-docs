@@ -75,6 +75,10 @@
                             <svg x-show="testingAccountId === account.id" x-cloak class="h-4 w-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg>
                             <span x-text="testingAccountId === account.id ? 'Testing…' : 'Test connection'"></span>
                         </button>
+                        <button x-show="account.auth_mode === 'oauth_user'" @click="refreshToken(account.id)" :disabled="refreshingAccountId !== null" type="button" class="inline-flex items-center gap-2 rounded-lg bg-sky-700 px-4 py-2 text-sm font-medium text-white hover:bg-sky-800 disabled:opacity-50">
+                            <svg x-show="refreshingAccountId === account.id" x-cloak class="h-4 w-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg>
+                            <span x-text="refreshingAccountId === account.id ? 'Opening Google…' : 'Refresh token'"></span>
+                        </button>
                         <button @click="smokeAccount(account.id)" :disabled="testingAccountId === account.id || smokingAccountId === account.id" type="button" class="inline-flex items-center gap-2 rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50">
                             <svg x-show="smokingAccountId === account.id" x-cloak class="h-4 w-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg>
                             <span x-text="smokingAccountId === account.id ? 'Running full test…' : 'Full write test'"></span>
@@ -82,34 +86,61 @@
                         <button @click="manageAccount(account.id)" type="button" class="rounded-lg border border-sky-200 bg-sky-50 px-4 py-2 text-sm font-medium text-sky-800 hover:bg-sky-100">Manage settings</button>
                         <button x-show="account.id !== defaultAccountId" @click="makeDefault(account.id)" :disabled="savingDefaultAccountId === account.id" type="button" class="rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50" x-text="savingDefaultAccountId === account.id ? 'Checking…' : 'Make default'"></button>
                     </div>
-                    <p class="text-xs text-gray-500">Full write test creates, updates, and deletes one temporary Google Doc.</p>
+                    <ul class="flex flex-col gap-1 text-xs text-gray-600">
+                        <li><strong>Test connection</strong> checks that Google accepts this account's saved token.</li>
+                        <li x-show="account.auth_mode === 'oauth_user'"><strong>Refresh token</strong> opens Google in this tab so you can sign in and issue a new token. Code saves it and tests it when Google sends you back.</li>
+                        <li><strong>Full write test</strong> creates one temporary Google Doc as this account, then deletes it.</li>
+                    </ul>
 
                     <template x-if="accountResults[account.id]">
                         <div class="rounded-xl border p-4" :class="accountResults[account.id].success ? 'border-green-200 bg-green-50 text-green-900' : 'border-red-200 bg-red-50 text-red-900'">
                             <p class="font-semibold" x-text="accountResults[account.id].success ? 'Test passed' : 'Test failed'"></p>
                             <p class="mt-1 text-sm" x-text="accountResults[account.id].message || 'Google did not return a usable result.'"></p>
-                            <div x-show="!accountResults[account.id].success" class="mt-4 border-t border-red-200 pt-4 text-sm">
-                                <p class="font-semibold">Fix this account in this order</p>
-                                <ol class="mt-2 list-decimal space-y-2 pl-5">
-                                    <li>Click <strong>Manage settings</strong> on this account and confirm <strong>OAuth user write</strong> is selected.</li>
-                                    <li>Confirm this profile has its OAuth client ID and client secret saved.</li>
-                                    <li>Click <strong>Refresh token</strong>, choose <strong x-text="account.label"></strong> at Google, and approve access.</li>
-                                    <li>This page will save the returned token and run <strong>Test connection</strong> automatically.</li>
-                                </ol>
-                                <p class="mt-3 font-medium">If Google reports redirect_uri_mismatch, add the callback URI shown in this account's OAuth section to that exact Web application client, save it, and click Refresh token again.</p>
-                            </div>
+                            <p x-show="!accountResults[account.id].success" class="mt-3 border-t border-red-200 pt-3 text-sm font-medium">To fix it, follow <strong>How to reconnect</strong> below, starting at step 1.</p>
                         </div>
                     </template>
 
-                    <details class="rounded-xl border border-blue-200 bg-blue-50 p-4 text-sm text-blue-900">
-                        <summary class="cursor-pointer font-semibold">Setup and repair instructions for <span x-text="account.label"></span></summary>
-                        <ol class="mt-3 list-decimal space-y-2 pl-5 text-blue-800">
-                            <li>Open <a href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noopener" class="font-medium underline">Google Cloud credentials</a> and open the OAuth web client used for this account.</li>
-                            <li>Enable the <a href="https://console.cloud.google.com/apis/library/drive.googleapis.com" target="_blank" rel="noopener" class="font-medium underline">Drive API</a> and <a href="https://console.cloud.google.com/apis/library/docs.googleapis.com" target="_blank" rel="noopener" class="font-medium underline">Docs API</a> in that project.</li>
-                            <li>Save the client ID and client secret under this account. Register the callback URI shown below if Google has not seen it before.</li>
-                            <li>Click <strong>Refresh token</strong>, sign in as <strong x-text="account.label"></strong>, and approve Docs + Drive access.</li>
-                            <li>Hexa saves the new token and tests the account automatically. Then run <strong>Full write test</strong> when you want to verify create, update, and delete.</li>
-                        </ol>
+                    <details x-show="account.auth_mode === 'oauth_user'" x-effect="if (accountResults[account.id] && !accountResults[account.id].success) $el.open = true" class="rounded-xl border border-blue-200 bg-blue-50 p-4 text-sm text-blue-950">
+                        <summary class="cursor-pointer font-semibold">How to reconnect <span x-text="account.label"></span> — step by step</summary>
+                        <div class="mt-4 flex flex-col gap-5">
+                            <div>
+                                <p class="font-semibold">Reconnect this account</p>
+                                <ol class="mt-2 flex list-decimal flex-col gap-2 pl-5">
+                                    <li>Open <a href="https://console.cloud.google.com/auth/audience" target="_blank" rel="noopener" class="font-medium underline">Google Cloud → Audience ↗</a>. If <strong>Publishing status</strong> says <strong>Testing</strong>, click <strong>Publish app</strong>, then <strong>Confirm</strong>. While an app is in Testing, Google cancels its tokens after 7 days. If it says <strong>In production</strong>, skip this step.</li>
+                                    <li>Come back to this page and click <strong>Refresh token</strong> on this card.</li>
+                                    <li>Google asks you to choose an account. Choose <strong x-text="account.label"></strong>. If it is not listed, click <strong>Use another account</strong> and sign in as <strong x-text="account.label"></strong>.</li>
+                                    <li>If Google shows <strong>Google hasn't verified this app</strong>, click <strong>Advanced</strong>, then the <strong>Go to … (unsafe)</strong> link below it.</li>
+                                    <li>If Google shows checkboxes for what the app can access, tick <strong>Select all</strong> so Google Docs and Google Drive are both checked. Then click <strong>Continue</strong>.</li>
+                                    <li>Google sends you back to this page. A green banner at the top saying <strong>Refresh token saved and Google Docs connection verified</strong> means it worked. Any other banner: find its wording under <strong>If you see an error</strong> below.</li>
+                                    <li>Click <strong>Full write test</strong> on this card. <strong>Test passed</strong> means Code created and deleted a Google Doc as this account.</li>
+                                </ol>
+                            </div>
+
+                            <div>
+                                <p class="font-semibold">If you see an error</p>
+                                <ul class="mt-2 flex list-disc flex-col gap-2 pl-5">
+                                    <li><strong>Google page: Error 400: redirect_uri_mismatch</strong> — open <a href="https://console.cloud.google.com/auth/clients" target="_blank" rel="noopener" class="font-medium underline">Google Cloud → Clients ↗</a> and click the client whose Client ID matches this account. To see this account's Client ID, click <strong>Manage settings</strong>, then <strong>Reveal</strong> beside <strong>Google OAuth client ID</strong>. Under <strong>Authorized redirect URIs</strong>, click <strong>Add URI</strong>, paste <code class="break-all rounded bg-blue-100 px-1.5 py-0.5 text-xs">{{ route('settings.google-docs.oauth.callback') }}</code>, and click <strong>Save</strong>. Wait 5 minutes, then click <strong>Refresh token</strong> again.</li>
+                                    <li><strong>Google page: Access blocked … has not completed the Google verification process</strong> — the app is still in Testing. Do step 1 above, or on <a href="https://console.cloud.google.com/auth/audience" target="_blank" rel="noopener" class="font-medium underline">Audience ↗</a> click <strong>Add users</strong> under <strong>Test users</strong> and add <strong x-text="account.label"></strong>. Then click <strong>Refresh token</strong> again.</li>
+                                    <li><strong>Google authorized … but this profile is …</strong> — you picked the wrong Google account. Click <strong>Refresh token</strong> again and choose <strong x-text="account.label"></strong>.</li>
+                                    <li><strong>Google did not issue a new offline refresh token</strong> — signed in as <strong x-text="account.label"></strong>, open <a href="https://myaccount.google.com/connections" target="_blank" rel="noopener" class="font-medium underline">Google Account → Third-party connections ↗</a>, select this app, and remove its access. Then click <strong>Refresh token</strong> again.</li>
+                                    <li><strong>The Google OAuth request is invalid or expired</strong> — more than 10 minutes passed, or you finished in a different browser. Click <strong>Refresh token</strong> again and finish within 10 minutes.</li>
+                                    <li><strong>Google authorization was not completed</strong> — the Google screen was cancelled. Click <strong>Refresh token</strong> again and click <strong>Continue</strong> at the end.</li>
+                                    <li><strong>Google OAuth token exchange failed</strong> — the Client secret saved here does not belong to that client. In <a href="https://console.cloud.google.com/auth/clients" target="_blank" rel="noopener" class="font-medium underline">Clients ↗</a>, open the matching client and copy its secret. Click <strong>Manage settings</strong>, click <strong>Change</strong> beside <strong>Google OAuth client secret</strong>, paste it, and save. Then click <strong>Refresh token</strong> again.</li>
+                                    <li><strong>Test says an API has not been used in project … or it is disabled</strong> — in that project, click <strong>Enable</strong> on <a href="https://console.cloud.google.com/apis/library/drive.googleapis.com" target="_blank" rel="noopener" class="font-medium underline">Google Drive API ↗</a> and <a href="https://console.cloud.google.com/apis/library/docs.googleapis.com" target="_blank" rel="noopener" class="font-medium underline">Google Docs API ↗</a>. Wait 5 minutes, then click <strong>Test connection</strong>.</li>
+                                </ul>
+                            </div>
+
+                            <div x-show="!account.has_oauth_client_id || !account.has_oauth_client_secret">
+                                <p class="font-semibold">First-time setup — this account is missing its Client ID or Client secret</p>
+                                <ol class="mt-2 flex list-decimal flex-col gap-2 pl-5">
+                                    <li>Open <a href="https://console.cloud.google.com/auth/clients" target="_blank" rel="noopener" class="font-medium underline">Google Cloud → Clients ↗</a> and click <strong>Create client</strong>. Set <strong>Application type</strong> to <strong>Web application</strong>.</li>
+                                    <li>Under <strong>Authorized redirect URIs</strong>, click <strong>Add URI</strong> and paste <code class="break-all rounded bg-blue-100 px-1.5 py-0.5 text-xs">{{ route('settings.google-docs.oauth.callback') }}</code>. Click <strong>Create</strong> and keep the Client ID and Client secret it shows.</li>
+                                    <li>In the same project, click <strong>Enable</strong> on <a href="https://console.cloud.google.com/apis/library/drive.googleapis.com" target="_blank" rel="noopener" class="font-medium underline">Google Drive API ↗</a> and <a href="https://console.cloud.google.com/apis/library/docs.googleapis.com" target="_blank" rel="noopener" class="font-medium underline">Google Docs API ↗</a>.</li>
+                                    <li>Click <strong>Manage settings</strong> on this card. Save the Client ID and Client secret in <strong>OAuth credentials</strong>.</li>
+                                    <li>Follow <strong>Reconnect this account</strong> above.</li>
+                                </ol>
+                            </div>
+                        </div>
                     </details>
                 </article>
             </template>
@@ -208,9 +239,9 @@
                 <p class="font-semibold text-sky-950">Automatic token refresh</p>
                 <p class="mt-1 text-sm text-sky-800">Click once, choose <strong x-text="selectedAccountLabel()"></strong> at Google, and approve access. Hexa saves the new refresh token and tests this account when Google sends you back.</p>
             </div>
-            <button @click="refreshToken" :disabled="refreshingToken" type="button" class="inline-flex shrink-0 items-center justify-center gap-2 rounded-lg bg-sky-700 px-5 py-3 text-sm font-semibold text-white hover:bg-sky-800 disabled:opacity-50">
-                <svg x-show="refreshingToken" x-cloak class="h-4 w-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg>
-                <span x-text="refreshingToken ? 'Opening Google…' : 'Refresh token'"></span>
+            <button @click="refreshToken(accountId)" :disabled="refreshingAccountId !== null" type="button" class="inline-flex shrink-0 items-center justify-center gap-2 rounded-lg bg-sky-700 px-5 py-3 text-sm font-semibold text-white hover:bg-sky-800 disabled:opacity-50">
+                <svg x-show="refreshingAccountId === accountId" x-cloak class="h-4 w-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg>
+                <span x-text="refreshingAccountId === accountId ? 'Opening Google…' : 'Refresh token'"></span>
             </button>
         </div>
 
@@ -235,16 +266,7 @@
             />
         </div>
 
-        <details class="rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-950">
-            <summary class="cursor-pointer font-semibold">If Refresh token fails</summary>
-            <ol class="mt-3 list-decimal space-y-2 pl-5">
-                <li><strong>Missing client ID or secret:</strong> save both rows above, then click <strong>Refresh token</strong> again.</li>
-                <li><strong>redirect_uri_mismatch:</strong> open the same <a href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noopener" class="font-medium underline">Google OAuth Web application client</a>, add this exact Authorized redirect URI, and save it:<br><code class="mt-2 inline-block break-all rounded bg-amber-100 px-2 py-1 text-xs">{{ route('settings.google-docs.oauth.callback') }}</code></li>
-                <li><strong>Wrong Google email:</strong> click Refresh token again and choose <strong x-text="selectedAccountLabel()"></strong>. Hexa rejects a token returned for another profile.</li>
-                <li><strong>Access blocked or app not configured:</strong> enable the <a href="https://console.cloud.google.com/apis/library/drive.googleapis.com" target="_blank" rel="noopener" class="font-medium underline">Drive API</a> and <a href="https://console.cloud.google.com/apis/library/docs.googleapis.com" target="_blank" rel="noopener" class="font-medium underline">Docs API</a>, then add this email as a test user if the OAuth app is still in testing.</li>
-                <li><strong>No refresh token returned:</strong> remove this app under Google Account → Security → Third-party connections, then click Refresh token and approve access again.</li>
-            </ol>
-        </details>
+        <p class="text-sm text-gray-600">Step-by-step reconnect instructions and the fix for every error are on the <strong x-text="selectedAccountLabel()"></strong> card above, under <strong>How to reconnect</strong>.</p>
     </section>
 
     <section class="rounded-xl border border-gray-200 bg-white p-6 shadow-sm flex flex-col gap-5">
